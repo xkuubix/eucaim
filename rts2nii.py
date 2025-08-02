@@ -13,7 +13,7 @@ import json
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 
 # DICOM tags for linking and identification
 Referenced_SOP_Instance_UID = (0x8, 0x1155)  # Link to DICOM by ID
@@ -211,10 +211,14 @@ def rtstruct2nii(path: str)-> None:
     json_keys = set([])
     os.chdir(path)
     folders = sorted(os.listdir(os.getcwd()))
-    for folder in folders:
+    for i, folder in enumerate(folders):
         logger.info('\n---------------------------------------')
-        logger.info(f'current folder path: {folder}')
+        logger.info(f'current folder path: {folder} ({i+1}/{len(folders)})')
         dcm_rts, seg_path = get_rtstruct(folder)
+        seg_save_path = f'{os.path.splitext(seg_path)[0]}.nii.gz'
+        if os.path.exists(seg_save_path):
+            logger.info(f'Segmentation file already exists: {seg_save_path}')
+            continue
         if dcm_rts != None:
             ref_sop_uid_mask_list = parse_ref_sop_uid(dcm_rts)
         for root, _, files in os.walk(folder, topdown=False):
@@ -227,10 +231,10 @@ def rtstruct2nii(path: str)-> None:
                         if ref_sop_uid == dcm[SOP_Instance_UID].value:
                             mask, rname = create_mask(dcm, dcm_rts, ref_sop_uid)
                             rname_str = '_'.join(rname)
-                            save_mask(mask, f'{os.path.splitext(seg_path)[0]}.nii.gz')
+                            save_mask(mask, seg_save_path)
                             # TO DO: each roi in single channel (will not overlap)
                             # TO DO: enable more file formats
-                            plot_mask(dcm, mask)
+                            # plot_mask(dcm, mask)
         # break # if for 1 subject only
     os.chdir(original_path)
 # %%
