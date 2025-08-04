@@ -219,12 +219,16 @@ def rtstruct2nii(path: str)-> None:
         logger.info('\n---------------------------------------')
         logger.info(f'current folder path: {folder} ({i+1}/{len(folders)})')
         dcm_rts, seg_path = get_rtstruct(folder)
-        seg_save_path = f'{os.path.splitext(seg_path)[0]}.nii.gz'
-        if os.path.exists(seg_save_path):
-            logger.info(f'Segmentation file already exists: {seg_save_path}')
+        
+        if seg_path is None:
+            logger.warning(f"seg_path is None for folder: {folder}, skipping...")
             continue
+
+        seg_save_path = f'{os.path.splitext(seg_path)[0]}.nii.gz'
+        
         if dcm_rts != None:
             ref_sop_uid_mask_list = parse_ref_sop_uid(dcm_rts)
+        
         for root, _, files in os.walk(folder, topdown=False):
             for name in files:
                 if name.endswith(".dcm"):
@@ -233,9 +237,13 @@ def rtstruct2nii(path: str)-> None:
                         continue
                     for ref_sop_uid in ref_sop_uid_mask_list:
                         if ref_sop_uid == dcm[SOP_Instance_UID].value:
-                            mask, rname = create_mask(dcm, dcm_rts, ref_sop_uid)
-                            rname_str = '_'.join(rname)
-                            save_mask(mask, seg_save_path)
+                            if os.path.exists(seg_save_path):
+                                logger.info(f'Segmentation file already exists: {seg_save_path}')
+                                continue
+                            else:
+                                mask, rname = create_mask(dcm, dcm_rts, ref_sop_uid)
+                                rname_str = '_'.join(rname)
+                                save_mask(mask, seg_save_path)
                             # TO DO: each roi in single channel (will not overlap)
                             # TO DO: enable more file formats
                             # plot_mask(dcm, mask)
