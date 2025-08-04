@@ -89,7 +89,7 @@ def save_mask(mask: np.ndarray, filename: str):
     logger.info('Saving mask...')
     try:
         nib.save(nib.Nifti1Image(mask, affine=np.eye(4)), filename)
-        logger.info('Mask saved successfully: {filename}')
+        logger.info(f'Mask saved successfully: {filename}')
     except Exception as e:
         logger.error(f'Failed to save mask: {str(e)}')
 
@@ -109,12 +109,14 @@ def create_mask(dcm: pydicom.FileDataset, dcm_rts: pydicom.FileDataset,
     roi_struct_set = dcm_rts[Structure_Set_ROI_Sequence]
     mask = np.zeros(image_shape, dtype=np.uint8)
     roi_names = []
-    roi_dict = {"number": [], "name": [], "mask" :[]}
-    
+    roi_dict = {
+        'name': {},
+        'mask': {}
+        }
+
     for item in roi_struct_set:
-        roi_dict['name'].append(item.ROIName)
-        roi_dict['number'].append(item.ROINumber)
-        roi_dict['mask'].append(np.zeros(image_shape, dtype=bool))
+        roi_dict['name'][item.ROINumber] = item.ROIName
+        roi_dict['mask'][item.ROINumber] = np.zeros(image_shape, dtype=bool)
     logger.info(f"roi dict {roi_dict['name']}")
     for roi in roi_contour_seq:
         _maxlenpoints = 0
@@ -134,9 +136,11 @@ def create_mask(dcm: pydicom.FileDataset, dcm_rts: pydicom.FileDataset,
                     mask_ith = ski.draw.polygon2mask(image_shape, points)
                     mask_ith.astype(bool)
                     if bitwise_operator == "OR":
-                        roi_dict['mask'][roi[Ref_ROI_Number].value - 1] = np.logical_or(roi_dict['mask'][roi[Ref_ROI_Number].value - 1], mask_ith)
+                        roi_dict['mask'][roi[Ref_ROI_Number].value] = np.logical_or(
+                            roi_dict['mask'][roi[Ref_ROI_Number].value], mask_ith)
                     elif bitwise_operator == "XOR":
-                        roi_dict['mask'][roi[Ref_ROI_Number].value - 1] = np.logical_xor(roi_dict['mask'][roi[Ref_ROI_Number].value - 1], mask_ith)
+                        roi_dict['mask'][roi[Ref_ROI_Number].value] = np.logical_xor(
+                            roi_dict['mask'][roi[Ref_ROI_Number].value], mask_ith)
                     else:
                         raise ValueError
                 else:
@@ -144,16 +148,16 @@ def create_mask(dcm: pydicom.FileDataset, dcm_rts: pydicom.FileDataset,
         # print(_maxlenpoints)
         # TO DO: roi name independent saving
         # now: save L(1-3) as 1-3, I as 4, else raise NotImplementedError or Warning
-        roi_name = roi_dict['name'][roi[Ref_ROI_Number].value - 1]
+        roi_name = roi_dict['name'][roi[Ref_ROI_Number].value]
         print(f'roi name: {roi_name}')
         if roi_name[0] == 'L':
-            value = np.uint8(roi_dict['name'][roi[Ref_ROI_Number].value - 1].split('L')[1])
+            value = np.uint8(roi_dict['name'][roi[Ref_ROI_Number].value].split('L')[1][0])
         elif roi_name == 'I': #[I]gnore (e.g. biopsy markers, etc.)
             value = 4
         else:
             logger.warning(f'Unknown ROI name: {roi_name}! Skipping...')
             continue
-        mask[roi_dict['mask'][roi[Ref_ROI_Number].value - 1]==1] = value
+        mask[roi_dict['mask'][roi[Ref_ROI_Number].value]==1] = value
         if append_roi_name:
             roi_names.append(roi_name)
 
