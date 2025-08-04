@@ -26,7 +26,7 @@ def get_json_info(folder: os.PathLike) -> dict:
     json_info = {}
     for root, _, files in os.walk(folder, topdown=False):
         for name in files:
-            if name.endswith(".json"):
+            if name.startswith('form_') and name.endswith(".json"):
                 with open(os.path.join(root, name), 'r') as f:
                     json_file = json.load(f)
                     json_info.update({name: json_file})
