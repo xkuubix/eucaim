@@ -1,5 +1,5 @@
 #%%
-from typing import List, Set
+from typing import Set
 from pydicom.uid import UID
 import pydicom
 from pydicom import dcmread
@@ -9,7 +9,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import skimage as ski
 import os
-import json
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +84,6 @@ def save_mask(mask: np.ndarray, filename: str):
     - mask: numpy array representing the multilabel mask
     - filename: name of the output NIfTI file
     """
-    nib.save(nib.Nifti1Image(mask, affine=np.eye(4)), filename)
     logger.info('Saving mask...')
     try:
         nib.save(nib.Nifti1Image(mask, affine=np.eye(4)), filename)
@@ -147,16 +145,16 @@ def create_mask(dcm: pydicom.FileDataset, dcm_rts: pydicom.FileDataset,
                     continue
         # print(_maxlenpoints)
         # TO DO: roi name independent saving
-        # now: save L(1-3) as 1-3, I as 4, else raise NotImplementedError or Warning
+        # now: save [L]1 etc. as 1-3, [I] as 4, else as 5
         roi_name = roi_dict['name'][roi[Ref_ROI_Number].value]
-        print(f'roi name: {roi_name}')
-        if roi_name[0] == 'L':
+        if roi_name[0] == 'L' and len(roi_name) == 2:
             value = np.uint8(roi_dict['name'][roi[Ref_ROI_Number].value].split('L')[1][0])
         elif roi_name == 'I': #[I]gnore (e.g. biopsy markers, etc.)
             value = 4
         else:
-            logger.warning(f'Unknown ROI name: {roi_name}! Skipping...')
-            continue
+            logger.warning(f'Unknown ROI name: {roi_name}!')
+            value = 5
+        logger.info(f"Assigning value {value} to ROI {roi_name}")
         mask[roi_dict['mask'][roi[Ref_ROI_Number].value]==1] = value
         if append_roi_name:
             roi_names.append(roi_name)
@@ -220,33 +218,29 @@ def rtstruct2nii(path: str)-> None:
         logger.info(f'current folder path: {folder} ({i+1}/{len(folders)})')
         dcm_rts, seg_path = get_rtstruct(folder)
         
-        if seg_path is None:
-            logger.warning(f"seg_path is None for folder: {folder}, skipping...")
-            continue
-
-        seg_save_path = f'{os.path.splitext(seg_path)[0]}.nii.gz'
-        
         if dcm_rts != None:
             ref_sop_uid_mask_list = parse_ref_sop_uid(dcm_rts)
         
         for root, _, files in os.walk(folder, topdown=False):
-            for name in files:
-                if name.endswith(".dcm"):
-                    dcm = dcmread(os.path.join(root, name))
+            for filename in files:
+                if filename.endswith(".dcm"):
+                    dcm = dcmread(os.path.join(root, filename))
                     if dcm.Modality == 'RTSTRUCT':
                         continue
                     for ref_sop_uid in ref_sop_uid_mask_list:
                         if ref_sop_uid == dcm[SOP_Instance_UID].value:
+                            seg_save_path = os.path.join(os.path.dirname(seg_path),
+                                                        f'segmentation_{ref_sop_uid}.nii.gz')
                             if os.path.exists(seg_save_path):
                                 logger.info(f'Segmentation file already exists: {seg_save_path}')
                                 continue
                             else:
                                 mask, rname = create_mask(dcm, dcm_rts, ref_sop_uid)
-                                rname_str = '_'.join(rname)
+                                rname_str = ' '.join(rname)
+                                print(f'Creating mask for {rname_str}...')
                                 save_mask(mask, seg_save_path)
-                            # TO DO: each roi in single channel (will not overlap)
                             # TO DO: enable more file formats
                             # plot_mask(dcm, mask)
-        # break # if for 1 subject only
+        # break # if for 1 subject only #DEBUG
     os.chdir(original_path)
 # %%
