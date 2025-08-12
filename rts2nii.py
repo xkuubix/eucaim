@@ -55,7 +55,7 @@ def get_rtstruct(folder: str) -> pydicom.FileDataset:
                 if dcm.Modality == 'RTSTRUCT':
                     dcm_rts = dcm
                     path = os.path.join(root, name)
-    if not dcm:
+    if not dcm_rts:
         logger.warning(f"No DICOM files found in: {folder}.")
     return dcm_rts, path
 
