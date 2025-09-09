@@ -206,15 +206,39 @@ def drop_na(df, subset_cols: List[str]):
 
 
 def filter_both_views_present_or_absent(df):
+    # Check if any CC/MLO annotations are present
     cc_present = df[['annotation_path_CC_L', 'annotation_path_CC_R']].notnull().any(axis=1)
     mlo_present = df[['annotation_path_MLO_L', 'annotation_path_MLO_R']].notnull().any(axis=1)
+
+    # Check that all four dicom paths are present
+    all_dicoms_present = df[['dicom_path_CC_L', 'dicom_path_CC_R', 
+                             'dicom_path_MLO_L', 'dicom_path_MLO_R']].notnull().all(axis=1)
+
     # Keep rows where:
     # 1. Both CC and MLO are present, OR
     # 2. Both CC and MLO are absent
-    # we can take the dropped cases for pretraining of C() and S()
-    keep_mask = (cc_present & mlo_present) | (~cc_present & ~mlo_present)
+    # AND all four dicoms are present
+    keep_mask = ((cc_present & mlo_present) | (~cc_present & ~mlo_present)) & all_dicoms_present
 
-    subset_data = df[keep_mask]
+    kept = df[keep_mask].copy()
+    dropped = df[~keep_mask].copy()
 
-    print(f"Number of cases kept (both views present or both absent): {len(subset_data)}")
-    return subset_data
+    print(f"Number of cases kept (both views present or both absent with all dicoms): {len(kept)}")
+    return kept, dropped
+
+def drop_class0_no_annotations(df):
+
+    annotation_cols = [
+        'annotation_path_MLO_L',
+        'annotation_path_MLO_R',
+        'annotation_path_CC_L',
+        'annotation_path_CC_R'
+    ]
+    if 'annotation_count' not in df.columns:
+        df['annotation_count'] = df[annotation_cols].notnull().sum(axis=1)
+    
+    dropped = df[(df['patientclass'] == 0) & (df['annotation_count'] == 0)]
+    kept = df.drop(dropped.index).copy()
+    print(f"\nRemoved {len(dropped)} rows. New size: {len(kept)}")
+
+    return kept, dropped
