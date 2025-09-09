@@ -126,7 +126,6 @@ def additional_columns(template_dict: dict) -> dict:
 
 
 def add_dicom_and_annotation_paths(df, dicom_dir):
-
     views = ["MLO", "CC"]
     laterality = ["L", "R"]
 
@@ -137,37 +136,30 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
     dicom_files = glob.glob(os.path.join(dicom_dir, "**", "resources", "DICOM", "files", "*.dcm"), recursive=True)
 
-    dicom_info = {}
-    for dcm_path in tqdm(dicom_files, desc="Adding paths"):
+    patient_dicoms = {}
+    for dcm_path in tqdm(dicom_files, desc="Reading DICOMs"):
         try:
             dcm = pydicom.dcmread(dcm_path, stop_before_pixels=True)
-            dicom_name = os.path.splitext(os.path.basename(dcm_path))[0]
-            
-            lat = dcm.ImageLaterality if "ImageLaterality" in dcm else None
-            view = dcm.ViewPosition if "ViewPosition" in dcm else None
-
-            if view == "MLO":
-                pass
-            elif view == "CC":
-                pass
-            # elif view in ["LL", "RL", "LM", "LMO"]:
-            #     if hasattr(dcm, "ViewCodeSequence") and len(dcm.ViewCodeSequence) > 0:
-            #         code_meaning = dcm.ViewCodeSequence[0].get("CodeMeaning", None)
-            #         if code_meaning in ["medio-lateral oblique",
-            #                             "medio-lateral",
-            #                             "latero-medial oblique",
-            #                             "latero-medial"]:
-            #             view = "ML"
-            #         elif code_meaning == "cranio-caudal":
-            #             view = "CC"
-            #         else:
-            #             print(f"Unrecognized CodeMeaning: {code_meaning} in {dcm_path}")
-            # else:
-            #     print(f"Unrecognized ViewPosition: {view} in {dcm_path}")
-            else:
+            if dcm.PhotometricInterpretation != "MONOCHROME2":
                 continue
-            if lat and view:
-                dicom_info[dicom_name] = (dcm_path, view.upper(), lat.upper())
+
+            lat = getattr(dcm, "ImageLaterality", None)
+            view = getattr(dcm, "ViewPosition", None)
+            if view not in views or lat not in laterality:
+                continue
+
+            rows = getattr(dcm, "Rows", 0)
+            cols = getattr(dcm, "Columns", 0)
+            resolution = rows * cols
+
+            record_id = None
+            for rid in df['record_id']:
+                if rid in dcm_path:
+                    record_id = rid
+                    break
+            if record_id is None:
+                continue
+            patient_dicoms.setdefault(record_id, []).append((dcm_path, view, lat, resolution))
         except Exception as e:
             print(f"Error reading {dcm_path}: {e}")
 
@@ -176,13 +168,33 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
     for idx, row in df.iterrows():
         record_id = row['record_id']
-        for dicom_name, (dcm_path, view, lat) in dicom_info.items():
-            if record_id in dcm_path:
-                df.at[idx, f'dicom_path_{view}_{lat}'] = dcm_path
-                ann_path = seg_info.get(dicom_name, None)
-                if dicom_name and ann_path:
-                    df.at[idx, f'annotation_path_{view}_{lat}'] = ann_path
+        if record_id not in patient_dicoms:
+            continue
 
+        dicoms = patient_dicoms[record_id]
+
+        # group by resolution
+        resolution_groups = {}
+        for dcm_path, view, lat, resolution in dicoms:
+            resolution_groups.setdefault(resolution, []).append((dcm_path, view, lat))
+
+        # find a group with all 4 views
+        selected_group = None
+        for res, group in sorted(resolution_groups.items(), key=lambda x: -x[0]):  # highest resolution first
+            views_present = {(v, l) for _, v, l in group}
+            if all((v, l) in views_present for v in views for l in laterality):
+                selected_group = group
+                break
+
+        if selected_group:
+            for dcm_path, view, lat in selected_group:
+                abs_dcm_path = os.path.abspath(dcm_path)
+                df.at[idx, f'dicom_path_{view}_{lat}'] = abs_dcm_path
+                dicom_name = os.path.basename(dcm_path).replace(".dcm", "")
+                ann_path = seg_info.get(dicom_name, None)
+                if ann_path:
+                    abs_ann_path = os.path.abspath(ann_path)
+                    df.at[idx, f'annotation_path_{view}_{lat}'] = abs_ann_path
     return df
 
 def drop_ambiguous_rows(df):
