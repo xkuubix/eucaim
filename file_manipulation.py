@@ -188,21 +188,29 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 def drop_ambiguous_rows(df):
     initial_count = len(df)
     #get patientclass 3 with annotation_path not null
-    df = df[~((df['patientclass'] == 2) & (
-        df[['annotation_path_CC_L', 'annotation_path_CC_R', 'annotation_path_MLO_L', 'annotation_path_MLO_R']].notnull().sum(axis=1) > 1
-    ))]
-    final_count = len(df)
-    print(f"Dropped {initial_count - final_count} ambiguous rows with patientclass 3.")
-    return df
+    mask = ((df['patientclass'] == 2) & (
+        df[['annotation_path_CC_L', 'annotation_path_CC_R', 'annotation_path_MLO_L', 'annotation_path_MLO_R']]
+        .notnull().sum(axis=1) > 1
+    ))
+
+    dropped = df[mask].copy()
+    kept = df[~mask].copy()
+    final_count = len(kept)
+
+    print(f"Dropped {initial_count - final_count} ambiguous rows with patientclass 2.")
+    return kept, dropped
 
 
 def drop_na(df, subset_cols: List[str]):
     initial_count = len(df)
     #get patientclass 3 with annotation_path not null
-    df.dropna(subset=subset_cols, how='all', inplace=True)
-    final_count = len(df)
+    mask = df[subset_cols].isnull().all(axis=1)
+
+    dropped = df[mask].copy()
+    kept = df[~mask].copy()
+    final_count = len(kept)
     print(f"Dropped {initial_count - final_count} rows with all null values in {subset_cols}.")
-    return df
+    return kept, dropped
 
 
 def filter_both_views_present_or_absent(df):
