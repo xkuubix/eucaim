@@ -35,16 +35,28 @@ if __name__ == '__main__':
     # print('RTSTRUCT to NIfTI conversion completed.')
 
     updated_df = add_dicom_and_annotation_paths(merged_data, DICOM_DIR)
-    updated_df = drop_na(updated_df, ["patientclass"])
-    updated_df = drop_ambiguous_rows(updated_df)
-    updated_df = filter_both_views_present_or_absent(updated_df)
-
+   
+    all_dropped = []
+    updated_df, dropped_na = drop_na(updated_df, ["patientclass"])
+    updated_df, dropped_ambiguous = drop_ambiguous_rows(updated_df)
+    updated_df, dropped_views = filter_both_views_present_or_absent(updated_df)
+    updated_df, dropped_class0 = drop_class0_no_annotations(updated_df)
     updated_df.reset_index(drop=True, inplace=True)
+    all_dropped.append(dropped_na)
+    all_dropped.append(dropped_ambiguous)
+    all_dropped.append(dropped_views)  # we can use the dropped cases for pretraining of C() and S()
+    all_dropped.append(dropped_class0) # we can use the dropped class0 cases for pretraining of C()
+
+    dropped_all_df = pd.concat(all_dropped, ignore_index=True)
 
     fname = 'dataset.pkl'
     with open(fname, 'wb') as f:
         pickle.dump(updated_df, f)
-        print(f'File saved as {fname}.')
+        print(f'Saved {fname}.')
 
+    fname = 'dropped_rows.pkl'
+    with open(fname, 'wb') as f:
+        pickle.dump(dropped_all_df, f)
+        print(f'Saved {fname}.')
 
 # %%
