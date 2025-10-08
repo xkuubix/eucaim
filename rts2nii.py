@@ -210,7 +210,6 @@ def rtstruct2nii(path: str)-> None:
         None
     """
     original_path = os.getcwd()
-    json_keys = set([])
     os.chdir(path)
     folders = sorted(os.listdir(os.getcwd()))
     for i, folder in enumerate(folders):
