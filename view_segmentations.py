@@ -23,7 +23,9 @@ def plot_patient_images(row):
     patient_class = row['patientclass']
     lesion_count = row['lesion_count']
     ID = row["record_id"]
-
+    path = f'images/patient_{ID}.png'
+    if os.path.exists(path):
+        return  # skip if already exists
     views = ['CC_L', 'MLO_L', 'CC_R', 'MLO_R']
     
     annotations_present = any(row.get(f'annotation_path_{view}', None) is not None for view in views)
@@ -59,7 +61,7 @@ def plot_patient_images(row):
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.show()
-    plt.savefig(f'images/patient_{ID}.png')
+    plt.savefig(path)
     plt.close()
 
 
