@@ -67,8 +67,7 @@ def plot_patient_images(row):
     plt.savefig(path)
     plt.close()
 
-
-if __name__ == '__main__':
+def main():
     os.chdir('/users/project1/pt01190/EUCAIM-PG-GUM/code')
 
     with open('dataset.pkl', 'rb') as f:
@@ -77,5 +76,5 @@ if __name__ == '__main__':
     for idx, row in tqdm(data.iterrows(), total=len(data)):
         plot_patient_images(row)
 
-
-# %%
+if __name__ == '__main__':
+    main()

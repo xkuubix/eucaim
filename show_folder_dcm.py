@@ -21,7 +21,6 @@ def plot_dicoms_from_folder(folder_path, max_images=6):
     
     for i, file_path in enumerate(dicom_files):
         ds = pydicom.dcmread(file_path)
-        print(ds.QualityControlImage)
         img = ds.pixel_array
         
         if ds.PhotometricInterpretation == "MONOCHROME1":
@@ -39,7 +38,11 @@ def plot_dicoms_from_folder(folder_path, max_images=6):
     plt.tight_layout()
     plt.show()
     return ds
-path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S0132/exp_ECI_GUM_S0132_20181113/scans/2-SINGLE_IMAGES__Mammografia_Diagnostyka__Diagnosis/resources/DICOM/files"
-ds = plot_dicoms_from_folder(path)
 
+def main():
+    path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S0132/exp_ECI_GUM_S0132_20181113/scans/2-SINGLE_IMAGES__Mammografia_Diagnostyka__Diagnosis/resources/DICOM/files"
+    plot_dicoms_from_folder(path)
+
+if __name__ == "__main__":
+    main()
 # %%
