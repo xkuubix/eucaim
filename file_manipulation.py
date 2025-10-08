@@ -199,7 +199,7 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
 def drop_ambiguous_rows(df):
     initial_count = len(df)
-    #get patientclass 3 with annotation_path not null
+    #get patientclass 2 with annotation_path not null
     mask = ((df['patientclass'] == 2) & (
         df[['annotation_path_CC_L', 'annotation_path_CC_R', 'annotation_path_MLO_L', 'annotation_path_MLO_R']]
         .notnull().sum(axis=1) > 1
@@ -215,7 +215,6 @@ def drop_ambiguous_rows(df):
 
 def drop_na(df, subset_cols: List[str]):
     initial_count = len(df)
-    #get patientclass 3 with annotation_path not null
     mask = df[subset_cols].isnull().all(axis=1)
 
     dropped = df[mask].copy()
@@ -237,7 +236,7 @@ def filter_both_views_present_or_absent(df):
     # Keep rows where:
     # 1. Both CC and MLO are present, OR
     # 2. Both CC and MLO are absent
-    # AND all four dicoms are present
+    # 3. All four dicoms are present
     keep_mask = ((cc_present & mlo_present) | (~cc_present & ~mlo_present)) & all_dicoms_present
 
     kept = df[keep_mask].copy()
