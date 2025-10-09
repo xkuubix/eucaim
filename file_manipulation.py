@@ -138,6 +138,10 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
     patient_dicoms = {}
     for dcm_path in tqdm(dicom_files, desc="Reading DICOMs"):
+
+        # skip DES (dual energy subtraction) files
+        if "_DES/" in dcm_path:
+            continue
         try:
             dcm = pydicom.dcmread(dcm_path, stop_before_pixels=True)
             if dcm.PhotometricInterpretation != "MONOCHROME2":
