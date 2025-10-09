@@ -141,10 +141,15 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
         # skip DES (dual energy subtraction) files
         if "_DES/" in dcm_path:
+            # e.g. S4626
             continue
         try:
             dcm = pydicom.dcmread(dcm_path, stop_before_pixels=True)
             if dcm.PhotometricInterpretation != "MONOCHROME2":
+                # e.g. S0088
+                continue
+            if getattr(dcm, "ExposureStatus", None) == "ABORTED":
+                # e.g. S3737
                 continue
 
             lat = getattr(dcm, "ImageLaterality", None)
