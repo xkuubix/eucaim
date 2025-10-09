@@ -6,7 +6,11 @@ import matplotlib.pyplot as plt
 def plot_dicoms_from_folder(folder_path, max_images=6):
     """Plot up to `max_images` DICOM files from a folder, showing SOP Instance UID as the title."""
     
-    dicom_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.dcm')]
+    dicom_files = [
+        os.path.join(root, f)
+        for root, _, files in os.walk(folder_path)
+        for f in files
+        if f.endswith('.dcm')]
     dicom_files = sorted(dicom_files)[:max_images]  # take up to max_images
     
     if not dicom_files:
@@ -40,7 +44,7 @@ def plot_dicoms_from_folder(folder_path, max_images=6):
     return ds
 
 def main():
-    path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S0132/exp_ECI_GUM_S0132_20181113/scans/2-SINGLE_IMAGES__Mammografia_Diagnostyka__Diagnosis/resources/DICOM/files"
+    path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S3671/"
     plot_dicoms_from_folder(path)
 
 if __name__ == "__main__":
