@@ -270,3 +270,32 @@ def drop_class0_no_annotations(df):
     print(f"\nRemoved {len(dropped)} rows. New size: {len(kept)}")
 
     return kept, dropped
+
+def make_long_format(data, id_vars):
+    data_anno = pd.melt(
+        data, 
+        id_vars=id_vars, 
+        value_vars=['annotation_path_CC_L', 'annotation_path_MLO_L', 'annotation_path_CC_R', 'annotation_path_MLO_R'],
+        var_name='view', 
+        value_name='annotation_path'
+    )
+
+    data_dicom = pd.melt(
+        data, 
+        id_vars=id_vars, 
+        value_vars=['dicom_path_CC_L', 'dicom_path_MLO_L', 'dicom_path_CC_R', 'dicom_path_MLO_R'],
+        var_name='view_dicom', 
+        value_name='dicom_path'
+    )
+
+    data_anno['view'] = data_anno['view'].str.replace('annotation_path_', '')
+    data_dicom['view_dicom'] = data_dicom['view_dicom'].str.replace('dicom_path_', '')
+
+    data_long = pd.merge(
+        data_anno, data_dicom,
+        left_on= id_vars + ['view'],
+        right_on= id_vars + ['view_dicom']
+    ).drop(columns=['view_dicom'])
+
+    data_long.head()
+    return data_long
