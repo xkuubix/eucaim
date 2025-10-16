@@ -1,5 +1,8 @@
 # %% import torch
 from torch.utils.data import Dataset
+from torchvision.transforms import v2
+from torchvision import tv_tensors
+from torchvision.transforms.functional import hflip
 import torch
 import os
 import pydicom
@@ -9,7 +12,6 @@ import pandas as pd
 import pickle
 from dicom_utils import get_pixels_no_voi
 from file_manipulation import make_long_format
-
 
 class PatientDataset(Dataset):
     def __init__(self, dataframe, transform=None):
@@ -100,16 +102,21 @@ class ImageDataset(Dataset):
             if annotation_image.ndim == 3:
                 annotation_image = annotation_image[:, :, 0]  # Take the first slice if 3D
             annotation = annotation_image
-
-        sample = {'image': image, 'annotation': annotation}
-
-        if self.transform:
-            pass
-
+        
+        sample = {}
         sample['patientclass'] = torch.tensor(self.dataframe.iloc[idx]['patientclass'])
         sample['record_id'] = self.dataframe.iloc[idx]['record_id']
         sample['view'] = self.dataframe.iloc[idx]['view'].split('_')[0]  # 'CC' or 'MLO'
         sample['laterality'] = self.dataframe.iloc[idx]['view'].split('_')[1]  # 'L' or 'R'
+        
+        if sample['laterality'] == 'R':
+            image = hflip(image)
+            annotation = hflip(annotation) if annotation is not None else None
+        sample ['image'] = image
+        sample ['annotation'] = annotation
+        if self.transform:
+            pass
+        
         return sample
 
 if __name__ == '__main__':
