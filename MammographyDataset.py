@@ -1,7 +1,8 @@
 # %% import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
-from torchvision import tv_tensors
+from torchvision import tv_tensors as tvt
+from PIL import Image
 from torchvision.transforms.functional import hflip
 import torch
 import os
@@ -21,6 +22,8 @@ class PatientDataset(Dataset):
             transform (callable, optional): Optional transform to be applied on a sample.
         """
         self.dataframe = dataframe
+        self.dataframe['classname'] = self.dataframe['patientclass'].map({2.0: 'normal', 1.0: 'benign', 0.0: 'malignant'})
+
         self.transform = transform
 
     def __len__(self):
@@ -60,13 +63,13 @@ class PatientDataset(Dataset):
         return sample
     
 class ImageDataset(Dataset):
-    def __init__(self, data_long, transform=None):
+    def __init__(self, dataframe, transform=None):
         """
         Args:
             dataframe (pd.DataFrame): DataFrame with columns for DICOM and annotation paths.
             transform (callable, optional): Optional transform to be applied on a sample.
         """
-            
+        data_long = make_long_format(dataframe, ['record_id', 'patientclass', 'laterality'])
         df_rest = data_long[data_long['patientclass'] != 0]
 
         # only take malignant breast images in malignant patients
@@ -81,6 +84,7 @@ class ImageDataset(Dataset):
         ]
 
         data_long_filtered = pd.concat([df_rest, df_with_lesion], axis=0)
+        data_long_filtered['classname'] = data_long_filtered['patientclass'].map({2: 'normal', 1: 'benign', 0: 'malignant'})
         self.dataframe = data_long_filtered
         self.transform = transform
 
@@ -101,7 +105,8 @@ class ImageDataset(Dataset):
             annotation_image = nib.load(annotation_path).get_fdata()
             if annotation_image.ndim == 3:
                 annotation_image = annotation_image[:, :, 0]  # Take the first slice if 3D
-            annotation = annotation_image
+            # Convert annotation (numpy) to torch Tensor
+            annotation = torch.from_numpy(np.asarray(annotation_image)).float()
         
         sample = {}
         sample['patientclass'] = torch.tensor(self.dataframe.iloc[idx]['patientclass'])
@@ -110,13 +115,17 @@ class ImageDataset(Dataset):
         sample['laterality'] = self.dataframe.iloc[idx]['view'].split('_')[1]  # 'L' or 'R'
         
         if sample['laterality'] == 'R':
+            # image is already a torch.Tensor (from_numpy). Flip tensors directly.
             image = hflip(image)
-            annotation = hflip(annotation) if annotation is not None else None
-        sample ['image'] = image
-        sample ['annotation'] = annotation
+            if annotation is not None:
+                annotation = hflip(annotation)
         if self.transform:
             pass
-        
+
+        sample['image'] = image
+        if annotation is None:
+            annotation = torch.zeros_like(image)
+        sample['annotation'] = annotation
         return sample
 
 if __name__ == '__main__':
@@ -131,9 +140,7 @@ if __name__ == '__main__':
     print(f'Patient Sample keys: {list(patient.keys())}')
 
 
-    data_long = make_long_format(data, ['record_id', 'patientclass', 'laterality'])
-
-    image_dataset = ImageDataset(data_long)
+    image_dataset = ImageDataset(data)
     print(f'Image Dataset size: {len(image_dataset)} samples.')
     image_sample = image_dataset[0]
     print(f'Image Sample keys: {list(image_sample.keys())}')
