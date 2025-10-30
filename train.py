@@ -56,12 +56,12 @@ criterion = GeneralizedDiceFocalLoss(
     gamma=4.0,
 ).to(device)
 
-if config['optimizer'] == 'adam':
+if config['training_plan'].get('optimizer') == 'adam':
     optimizer = torch.optim.Adam(unet.parameters(), lr=config['training_plan']['parameters']['lr'])
-elif config['optimizer'] == 'sgd':
+elif config['training_plan'].get('optimizer') == 'sgd':
     optimizer = torch.optim.SGD(unet.parameters(), lr=config['training_plan']['parameters']['lr'], momentum=0.9)
 else:
-    raise ValueError(f"Unsupported optimizer type: {config['optimizer']}")
+    raise ValueError(f"Unsupported optimizer type: {config['training_plan'].get('optimizer')}")
 
 epochs = config['training_plan']['parameters'].get('epochs', 100)
 validate_every = config['training_plan']['parameters'].get('validate_every', 1)
