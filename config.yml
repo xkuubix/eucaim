@@ -29,10 +29,9 @@ training_plan:
     wd: 0.0001
     epochs: 1000
     patience: 20
+    validate_every: 1
     grad_acc_steps: 2
 
-  criterion: 'bce'
-  weighted_loss: False
   optimizer: 'adam'
 
   # scheduler:
