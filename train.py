@@ -77,6 +77,7 @@ history = train(
     validate_every=validate_every,
     early_stopping_patience=early_stopping_patience,
     save_path=checkpoint_path,
+    neptune_run=run
 )
 
 print('Training finished. History keys:', list(history.keys()))

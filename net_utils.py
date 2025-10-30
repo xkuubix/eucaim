@@ -249,6 +249,9 @@ def train(
             val_stats = validate(model, dataloaders['val'], criterion, device)
             history['val_loss'].append(val_stats['loss'])
             history['val_dice'].append(val_stats['dice'])
+            if neptune_run is not None:
+                _safe_neptune_log(neptune_run, 'val/loss', val_stats['loss'], step=epoch)
+                _safe_neptune_log(neptune_run, 'val/dice', val_stats['dice'], step=epoch)
             did_validate = True
 
             # Early stopping / checkpointing logic (only when we actually validated)
