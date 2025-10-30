@@ -1,0 +1,41 @@
+neptune: True
+seed: 42
+device: 'cuda'
+
+model_path: '/users/scratch1/jbuler/eucaim/models'
+
+data:
+  num_classes: 2
+  cv_folds: 5
+  fraction_train: 0.70
+  fraction_cal: 0.0
+  
+  weighted_sampling: False
+
+  root_path: '/users/project1/pt01190/EUCAIM-PG-GUM/code'
+  metadata_path: '/users/project1/pt01190/EUCAIM-PG-GUM/code/dataset.pkl'
+  
+  patch_size: 256
+  overlap: .75
+  empty_threshold: 0.75
+  bag_size: -1
+
+
+training_plan:
+  parameters:
+    batch_size: 1
+    num_workers: 8
+    lr: 0.0001
+    wd: 0.0001
+    epochs: 1000
+    patience: 20
+    grad_acc_steps: 2
+
+  criterion: 'bce'
+  weighted_loss: False
+  optimizer: 'adam'
+
+  # scheduler:
+  #   name: 'lin'
+  #   step_size: 100
+  #   gamma: 0.9
