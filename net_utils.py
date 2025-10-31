@@ -17,15 +17,26 @@ def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
         preds = (probs > threshold).float()
         # sum over spatial dims
         dims = tuple(range(1, preds.dim()))
+
         tp = (preds * targets).sum(dim=dims)
         fp = (preds * (1 - targets)).sum(dim=dims)
         fn = ((1 - preds) * targets).sum(dim=dims)
+
         # add eps to denom
-        dice_per_item = (2 * tp / (2 * tp + fp + fn + 1e-7)).cpu().numpy()
-        # if result is scalar (no batch dim), wrap
-        if np.isscalar(dice_per_item):
-            dice_per_item = np.array([dice_per_item])
-    return float(dice_per_item.mean()), int(dice_per_item.size)
+        denom = (2 * tp + fp + fn + 1e-7)
+        dice_per_item = 2 * tp / denom
+
+        # exclude fully negative patches (no ROI in target and prediction)
+        valid_mask = (targets.sum(dim=dims) + preds.sum(dim=dims)) > 0
+        valid_dice = dice_per_item[valid_mask]
+
+        if valid_dice.numel() == 0:
+            return 1.0, 0  # if all patches are empty, define Dice = 1.0 or return n_items = 0
+
+        dice_mean = valid_dice.mean().item()
+        n_items = valid_dice.numel()
+
+    return float(dice_mean), int(n_items)
 
 
 def _safe_neptune_log(run: Any, key: str, value: object, step: Optional[int] = None) -> None:
