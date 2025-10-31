@@ -65,7 +65,10 @@ else:
 epochs = config['training_plan']['parameters'].get('epochs', 100)
 validate_every = config['training_plan']['parameters'].get('validate_every', 1)
 early_stopping_patience = config['training_plan']['parameters'].get('patience', None)
-checkpoint_path = config.get('model_path') + run['sys/id'].fetch() + '_best.pth'
+if run:
+    checkpoint_path = os.path.join(config.get('model_path'), f"{run['sys/id'].fetch()}_best.pth")
+else:
+    checkpoint_path = os.path.join(config.get('model_path'), "interactive_best_model.pth")
 
 history = train(
     unet,
