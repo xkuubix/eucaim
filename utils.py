@@ -9,6 +9,13 @@ import numpy as np
 from sklearn.model_selection import KFold
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from MammographyDataset import *
+from monai.losses import (
+    DiceLoss,
+    DiceCELoss,
+    GeneralizedDiceLoss,
+    DiceFocalLoss,
+    GeneralizedDiceFocalLoss
+)
 
 
 def get_args_parser():
@@ -225,3 +232,25 @@ def get_fold_number(model_name: str) -> int:
         return int(match.group(1))
     else:
         raise ValueError(f"No fold number found in '{model_name}'")
+    
+
+def get_loss_function(loss_fn_name: str, device: torch.device):
+
+
+    if loss_fn_name == 'dice':
+        criterion = DiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
+    elif loss_fn_name == 'dice_ce':
+        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean")
+    elif loss_fn_name == 'gdl':
+        criterion = GeneralizedDiceLoss(sigmoid=True, to_onehot_y=False, reduction="mean")
+    elif loss_fn_name == 'dice_focal':
+        criterion = DiceFocalLoss(to_onehot_y=False, sigmoid=True, reduction="mean",
+                                  lambda_dice=1.0, lambda_focal=1.0, gamma=4.0)
+    elif loss_fn_name == 'gdl_focal':
+        criterion = GeneralizedDiceFocalLoss(sigmoid=True, to_onehot_y=False, reduction="mean",
+                                            lambda_gdl=1.0, lambda_focal=1.0, gamma=4.0)
+    else:
+        raise ValueError(f"Unsupported loss function: {loss_fn_name}")
+
+    criterion = criterion.to(device)
+    return criterion

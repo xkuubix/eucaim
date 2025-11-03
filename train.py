@@ -46,14 +46,10 @@ unet = PatchUNet(
     bias=False, # using norm
 ).to(device)
 
-criterion = GeneralizedDiceFocalLoss(
-    sigmoid=True,
-    to_onehot_y=False,
-    reduction="mean",
-    lambda_gdl=1.0,
-    lambda_focal=1.0,
-    gamma=4.0,
-).to(device)
+loss_fn_name = config['training_plan'].get('loss_function', 'dice')
+
+criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
+
 
 if config['training_plan'].get('optimizer') == 'adam':
     optimizer = torch.optim.Adam(unet.parameters(), lr=config['training_plan']['parameters']['lr'])
