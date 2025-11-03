@@ -281,17 +281,17 @@ def train(
                         if neptune_run is not None:
                             _safe_neptune_log(neptune_run, 'best/model_path', save_path, step=epoch)
                             _safe_neptune_log(neptune_run, 'best/val_loss', best_val, step=epoch)
-                            _safe_neptune_log(neptune_run, 'early_stopping/epochs_since_improve', epochs_since_improve, step=epoch)
+                            _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
                 else:
                     epochs_since_improve += 1
                     if neptune_run is not None:
-                        _safe_neptune_log(neptune_run, 'early_stopping/epochs_since_improve', epochs_since_improve, step=epoch)
+                        _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
 
                 if epochs_since_improve >= early_stopping_patience:
                     print(f"Early stopping triggered at epoch {epoch+1}. No improvement for {epochs_since_improve} validation checks.")
                     if neptune_run is not None:
                         _safe_neptune_log(neptune_run, 'early_stopping/stopped_epoch', epoch+1, step=epoch)
-                        _safe_neptune_log(neptune_run, 'early_stopping/epochs_since_improve', epochs_since_improve, step=epoch)
+                        _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
                     break
 
         print(f"Epoch {epoch+1}/{epochs} | train loss: {train_stats['loss']:.4f} dice: {train_stats['dice']:.4f}", end='')
