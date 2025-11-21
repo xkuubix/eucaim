@@ -66,8 +66,8 @@ class ImagePatcher:
         tiles = self.tiles
         c, h, w = image_shape
         
-        reconstructed_image = torch.zeros(c, h, w, dtype=torch.float, device='cpu')
-        patch_count = torch.zeros(c, h, w, dtype=torch.float, device='cpu')
+        reconstructed_image = torch.zeros(c, h, w, dtype=torch.float, device=patches.device)
+        patch_count = torch.zeros(c, h, w, dtype=torch.float, device=patches.device)
 
         for item in range(len(instances_ids)):
             h_min, w_min, dh, dw, _, _ = tiles[instances_ids[item]]
@@ -76,9 +76,9 @@ class ImagePatcher:
             reconstructed_image[:, h_min:h_min + dh, w_min:w_min + dw] += patch
             patch_count[:, h_min:h_min + dh, w_min:w_min + dw] += 1
 
-        patch_count = torch.where(patch_count == 0, torch.ones_like(patch_count), patch_count)
-        return reconstructed_image
- 
+        counts = torch.where(patch_count == 0, torch.ones_like(patch_count), patch_count)
+        return reconstructed_image/counts, patch_count 
+
 
     def reconstruct_attention_map(self, attention_weights, instances_ids, image_shape):
        
