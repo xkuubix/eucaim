@@ -1,4 +1,5 @@
 # %% import torch
+import cv2
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
 from torchvision import tv_tensors as tvt
@@ -13,6 +14,35 @@ import pandas as pd
 import pickle
 from dicom_utils import get_pixels_no_voi
 from file_manipulation import make_long_format
+import cv2
+
+
+def crop_to_breast(img, annot, threshold=0.05):
+    #  [H,W]
+    if img.dim() == 3:
+        gray = img.mean(0)
+    else:
+        gray = img
+    
+    # binary mask
+    mask = gray > threshold
+    
+    # remove tiny objects by keeping largest connected component
+    mask_np = mask.cpu().numpy().astype('uint8')
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_np)
+    if num_labels <= 1:  # no objects
+        return img
+    largest_idx = stats[1:, cv2.CC_STAT_AREA].argmax() + 1  # +1 because 0 is background
+    largest_mask = (labels == largest_idx)
+    
+    largest_mask = torch.tensor(largest_mask, dtype=torch.uint8)  # if it's numpy
+    coords = largest_mask.nonzero(as_tuple=False)
+    mins = coords.min(0)[0]
+    maxs = coords.max(0)[0]
+    y_min, x_min = mins[0].item(), mins[1].item()
+    y_max, x_max = maxs[0].item(), maxs[1].item()
+    
+    return img[y_min:y_max+1, x_min:x_max+1], annot[y_min:y_max+1, x_min:x_max+1]
 
 class PatientDataset(Dataset):
     def __init__(self, dataframe, transform=None):
@@ -121,11 +151,11 @@ class ImageDataset(Dataset):
                 annotation = hflip(annotation)
         if self.transform:
             pass
-
-        sample['image'] = image
+        # sample['image'] = image
         if annotation is None:
             annotation = torch.zeros_like(image)
-        sample['annotation'] = annotation
+        sample['image'], sample['annotation'] = crop_to_breast(image, annotation)
+        # sample['annotation'] = annotation
         return sample
 
 if __name__ == '__main__':
