@@ -7,13 +7,12 @@ class PatchUNet(UNet):
     def __init__(self, config, *args, **kwds):
         super().__init__(*args, **kwds)
         patch_size = config['data'].get('patch_size', 128)
-        overlap = config['data'].get('patch_overlap', 0.)
+        overlap = config['data'].get('overlap', 0.)
         bag_size = config['data'].get('bag_size', -1)
-        empty_thresh = config['data'].get('empty_thresh', 0.)
+        empty_thresh = config['data'].get('empty_threshold', 0.)
         self.patcher = ImagePatcher(patch_size=patch_size, overlap=overlap, bag_size=bag_size, empty_thresh=empty_thresh)
-    
+
     def forward(self, x, mask=None):
-        # --- dodać patchowanie ---
         if mask is not None:
             x, mask_patches, instances_ids, _ = self.patch_image_and_mask(x, mask)
         else:
