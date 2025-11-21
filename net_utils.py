@@ -39,6 +39,24 @@ def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
     return float(dice_mean), int(n_items)
 
 
+def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5, patch_count: Optional[torch.Tensor] = None) -> float:
+    """
+    Compute Dice score for a batch of reconstructed full-image logits.
+    """
+    with torch.no_grad():
+        probs = torch.sigmoid(logits)
+        mask_valid = patch_count > 0
+        probs[~mask_valid] = 0.
+        preds = (probs > threshold).float()
+        dims = tuple(range(1, preds.dim()))  # sum over spatial dims
+        tp = (preds * targets).sum(dim=dims)
+        fp = (preds * (1 - targets)).sum(dim=dims)
+        fn = ((1 - preds) * targets).sum(dim=dims)
+
+        dice_per_image = 2 * tp / (2 * tp + fp + fn + 1e-7)
+        return dice_per_image.mean().item()
+
+
 def _safe_neptune_log(run: Any, key: str, value: object, step: Optional[int] = None) -> None:
     """Try to log a value to Neptune run. Works whether the run exposes `.log()` or accepts assignment.
 
@@ -130,16 +148,15 @@ def validate(
             images = batch['image'].to(device)
             masks = batch['annotation'].to(device)
 
-            preds_patched, masks_patched, _ = model(images, masks)
+            preds_patched, masks_patched, instances_ids = model(images, masks)
+            pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
+            mask, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else None
             loss = criterion(preds_patched, masks_patched)
-
-            running_loss += float(loss.item()) * images.size(0)
-            dice_mean, cnt = _binary_metrics_from_logits(preds_patched, masks_patched)
-            running_dice += dice_mean * cnt
-            n_items += cnt
+            running_dice += _dice_from_logits_map(pred, mask, threshold=0.5, patch_count=patch_count)
+            running_loss += float(loss.item())
 
     avg_loss = running_loss / max(1, len(dataloader.dataset))
-    avg_dice = running_dice / max(1, n_items)
+    avg_dice = running_dice / max(1, len(dataloader.dataset))
     return {"loss": avg_loss, "dice": avg_dice}
 
 
