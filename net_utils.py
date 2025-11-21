@@ -70,13 +70,13 @@ def _safe_neptune_log(run: Any, key: str, value: object, step: Optional[int] = N
 
 
 def train_epoch(
-    model: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: torch.nn.Module,
-    device: torch.device,
-    clip_grad: Optional[float] = None,
-) -> Dict[str, float]:
+        model: torch.nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+        optimizer: torch.optim.Optimizer,
+        criterion: torch.nn.Module,
+        device: torch.device,
+        clip_grad: Optional[float] = None,
+        ) -> Dict[str, float]:
     """
     Run one training epoch.
 
@@ -116,7 +116,7 @@ def validate(
     dataloader: torch.utils.data.DataLoader,
     criterion: torch.nn.Module,
     device: torch.device,
-) -> Dict[str, float]:
+    ) -> Dict[str, float]:
     """
     Run validation (no grad). Returns average loss and dice.
     """
@@ -204,20 +204,20 @@ def test(
 
 
 def train(
-    model: torch.nn.Module,
-    dataloaders: Dict[str, torch.utils.data.DataLoader],
-    optimizer: torch.optim.Optimizer,
-    criterion: torch.nn.Module,
-    device: torch.device,
-    epochs: int = 10,
-    scheduler: Optional[object] = None,
-    clip_grad: Optional[float] = None,
-    validate_every: int = 1,
-    early_stopping_patience: Optional[int] = None,
-    save_path: Optional[str] = None,
-    min_delta: float = 1e-8,
-    neptune_run: Optional[Any] = None,
- ) -> Dict[str, object]:
+        model: torch.nn.Module,
+        dataloaders: Dict[str, torch.utils.data.DataLoader],
+        optimizer: torch.optim.Optimizer,
+        criterion: torch.nn.Module,
+        device: torch.device,
+        epochs: int = 10,
+        scheduler: Optional[object] = None,
+        clip_grad: Optional[float] = None,
+        validate_every: int = 1,
+        early_stopping_patience: Optional[int] = None,
+        save_path: Optional[str] = None,
+        min_delta: float = 1e-8,
+        neptune_run: Optional[Any] = None,
+        ) -> Dict[str, object]:
     """
     High-level training loop.
 
@@ -227,13 +227,11 @@ def train(
     if 'val' in dataloaders:
         history.update({"val_loss": [], "val_dice": []})
 
-    # Early stopping bookkeeping
     best_val = float('inf')
     best_epoch = -1
     epochs_since_improve = 0
     best_model_path: Optional[str] = None
     if save_path is not None:
-        # ensure directory exists
         save_dir = os.path.dirname(save_path)
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
@@ -243,7 +241,6 @@ def train(
         history['train_loss'].append(train_stats['loss'])
         history['train_dice'].append(train_stats['dice'])
 
-        # Neptune: log training metrics per epoch
         if neptune_run is not None:
             _safe_neptune_log(neptune_run, 'train/loss', train_stats['loss'], step=epoch)
             _safe_neptune_log(neptune_run, 'train/dice', train_stats['dice'], step=epoch)
@@ -252,7 +249,6 @@ def train(
             try:
                 scheduler.step()
             except Exception:
-                # some schedulers expect a metric argument
                 pass
 
         did_validate = False
@@ -265,7 +261,6 @@ def train(
                 _safe_neptune_log(neptune_run, 'val/dice', val_stats['dice'], step=epoch)
             did_validate = True
 
-            # Early stopping / checkpointing logic (only when we actually validated)
             if early_stopping_patience is not None:
                 current_val = val_stats['loss']
                 # improvement if decrease greater than min_delta
@@ -300,7 +295,6 @@ def train(
         else:
             print("")
 
-    # Attach metadata about best model / early stopping
     history_out: Dict[str, object] = history
     history_out['best_epoch'] = best_epoch
     history_out['best_val_loss'] = best_val if best_epoch >= 0 else None
