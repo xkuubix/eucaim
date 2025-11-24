@@ -240,14 +240,14 @@ def get_loss_function(loss_fn_name: str, device: torch.device):
     if loss_fn_name == 'dice':
         criterion = DiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
     elif loss_fn_name == 'dice_ce':
-        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean")
+        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean")#, weight=pos_weight.to(device))
     elif loss_fn_name == 'gdl':
-        criterion = GeneralizedDiceLoss(sigmoid=True, to_onehot_y=False, reduction="mean")
+        criterion = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
     elif loss_fn_name == 'dice_focal':
         criterion = DiceFocalLoss(to_onehot_y=False, sigmoid=True, reduction="mean",
                                   lambda_dice=1.0, lambda_focal=1.0, gamma=4.0)
     elif loss_fn_name == 'gdl_focal':
-        criterion = GeneralizedDiceFocalLoss(sigmoid=True, to_onehot_y=False, reduction="mean",
+        criterion = GeneralizedDiceFocalLoss(to_onehot_y=False, sigmoid=True, reduction="mean",
                                             lambda_gdl=1.0, lambda_focal=1.0, gamma=4.0)
     else:
         raise ValueError(f"Unsupported loss function: {loss_fn_name}")
