@@ -28,6 +28,7 @@ if config["neptune"]:
 else:
     run = None
 
+utils.reset_seed(config.get('seed', 42))
 dataloaders = utils.get_fold_dataloaders(config, 0)
 
 unet = PatchUNet(
