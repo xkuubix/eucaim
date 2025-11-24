@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import torch
 from net_utils import _dice_from_logits_map
 
+
 parser = utils.get_args_parser()
 args, unknown = parser.parse_known_args()
 with open(args.config) as file:
@@ -50,6 +51,10 @@ unet = PatchUNet(
     bias=False, # using norm
 ).to(device)
 
+model_path = None
+if model_path is not None:
+    unet.load_state_dict(torch.load(model_path, map_location=device))
+
 loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
@@ -71,15 +76,13 @@ with torch.no_grad():
         valid_mask = patch_count > 0
         probs[~valid_mask] = 0.
         preds = (probs > 0.5).float()
-        fig, axs = plt.subplots(1, 4, figsize=(20, 5))
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
         axs[0].imshow(images[0].cpu(), cmap='gray')
         axs[0].set_title('Input Image')
         axs[1].imshow(mask[0].cpu(), cmap='gray')
         axs[1].set_title('Ground Truth Mask')
-        axs[2].imshow(probs[0].cpu(), cmap='gray')
+        axs[2].imshow(preds[0].cpu(), cmap='gray')
         axs[2].set_title('Predicted Mask')
-        axs[3].imshow(preds[0].cpu(), cmap='gray')
-        axs[3].set_title('Binary Prediction')
         plt.show()
         break
 
