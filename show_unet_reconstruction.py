@@ -21,17 +21,8 @@ with open(args.config) as file:
 selected_device = config['device']
 device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 
-if config["neptune"]:
-    run = neptune.init_run(project="ProjektMMG/Mammografia")
-    run["sys/group_tags"].add(["SEG"])
-    run["sys/group_tags"].add(["CLEAR-AI"])
-    run["sys/group_tags"].add(["dice dla +"])
-    run["sys/group_tags"].add(["weighted CE"])
-    run["sys/tags"].add(["undersampling"])
-    run["sys/tags"].add(["positive patients"])
-    run["config"] = config
-else:
-    run = None
+# todo add loading model from run
+run = None
 
 dataloaders = utils.get_fold_dataloaders(config, 0)
 
