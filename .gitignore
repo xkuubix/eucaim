@@ -4,3 +4,4 @@ images/
 *.pth
 *.csv
 *.neptune
+wandb
