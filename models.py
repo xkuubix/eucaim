@@ -13,6 +13,24 @@ class PatchUNet(UNet):
         self.patcher = ImagePatcher(patch_size=patch_size, overlap=overlap, bag_size=bag_size, empty_thresh=empty_thresh)
 
     def forward(self, x, mask=None):
+        C, H, W = x.shape
+        ps = self.patcher.patch_size
+
+        if H < ps or W < ps:
+            new_H = max(H, ps)
+            new_W = max(W, ps)
+
+            padded_x = torch.zeros((C, new_H, new_W),
+                                device=x.device, dtype=x.dtype)
+            padded_x[:, :H, :W] = x
+            x = padded_x                      # now [1,C,new_H,new_W]
+
+            if mask is not None:
+                padded_m = torch.zeros((C, new_H, new_W),
+                                    device=mask.device, dtype=mask.dtype)
+                padded_m[:, :H, :W] = mask
+                mask = padded_m
+
         if mask is not None:
             x, mask_patches, instances_ids, _ = self.patch_image_and_mask(x, mask)
         else:
