@@ -57,34 +57,43 @@ def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, threshold
         return dice_per_image.mean().item()
 
 
-def _safe_neptune_log(run: Any, key: str, value: object, step: Optional[int] = None) -> None:
-    """Try to log a value to Neptune run. Works whether the run exposes `.log()` or accepts assignment.
+def _safe_wandb_log(run: Any, key: str, value: object, step: Optional[int] = None) -> None:
+    """Try to log a value to wandb/Neptune run. Works with both APIs.
 
     This is intentionally permissive: if logging fails we silently continue so this file stays usable
-    even if Neptune isn't available at runtime.
+    even if wandb/Neptune isn't available at runtime.
     """
     if run is None:
         return
     try:
-        # preferred: run['key'].log(value, step=step)
-        target = run[key]
-        try:
-            if step is None:
-                target.log(value)
+        # Try wandb API first: run.log({'key': value}, step=step)
+        if hasattr(run, 'log') and callable(run.log):
+            log_dict = {key: value}
+            if step is not None:
+                run.log(log_dict, step=step)
             else:
-                target.log(value, step=step)
-            return
-        except Exception:
-            # fallback to assignment
-            run[key] = value
+                run.log(log_dict)
             return
     except Exception:
-        # fallback: maybe run supports direct item assignment
-        try:
-            run[key] = value
-        except Exception:
-            # give up silently
-            return
+        pass
+    
+    try:
+        # Fallback to Neptune API: run['key'].log(value, step=step)
+        target = run[key]
+        if step is None:
+            target.log(value)
+        else:
+            target.log(value, step=step)
+        return
+    except Exception:
+        pass
+    
+    try:
+        # Final fallback: direct assignment
+        run[key] = value
+    except Exception:
+        # give up silently
+        return
 
 
 def train_epoch(
@@ -166,7 +175,7 @@ def test(
     criterion: Optional[torch.nn.Module],
     device: torch.device,
     return_predictions: bool = False,
-    neptune_run: Optional[Any] = None,
+    wandb_run: Optional[Any] = None,
 ) -> Dict[str, object]:
     """
     Run a test loop. If `criterion` is provided, compute loss as well.
@@ -208,14 +217,14 @@ def test(
         out['dice'] = running_dice / n_items
     if return_predictions:
         out['predictions'] = all_preds
-    # Neptune logging if provided
-    if neptune_run is not None:
+    # wandb logging if provided
+    if wandb_run is not None:
         if 'loss' in out:
-            _safe_neptune_log(neptune_run, 'test/loss', out['loss'])
+            _safe_wandb_log(wandb_run, 'test/loss', out['loss'])
         if 'dice' in out:
-            _safe_neptune_log(neptune_run, 'test/dice', out['dice'])
+            _safe_wandb_log(wandb_run, 'test/dice', out['dice'])
         if return_predictions:
-            _safe_neptune_log(neptune_run, 'test/n_predictions', len(all_preds))
+            _safe_wandb_log(wandb_run, 'test/n_predictions', len(all_preds))
 
     return out
 
@@ -233,7 +242,7 @@ def train(
         early_stopping_patience: Optional[int] = None,
         save_path: Optional[str] = None,
         min_delta: float = 1e-8,
-        neptune_run: Optional[Any] = None,
+        wandb_run: Optional[Any] = None,
         ) -> Dict[str, object]:
     """
     High-level training loop.
@@ -258,9 +267,9 @@ def train(
         history['train_loss'].append(train_stats['loss'])
         history['train_dice'].append(train_stats['dice'])
 
-        if neptune_run is not None:
-            _safe_neptune_log(neptune_run, 'train/loss', train_stats['loss'], step=epoch)
-            _safe_neptune_log(neptune_run, 'train/dice', train_stats['dice'], step=epoch)
+        if wandb_run is not None:
+            _safe_wandb_log(wandb_run, 'train/loss', train_stats['loss'], step=epoch)
+            _safe_wandb_log(wandb_run, 'train/dice', train_stats['dice'], step=epoch)
 
         if scheduler is not None:
             try:
@@ -273,9 +282,9 @@ def train(
             val_stats = validate(model, dataloaders['val'], criterion, device)
             history['val_loss'].append(val_stats['loss'])
             history['val_dice'].append(val_stats['dice'])
-            if neptune_run is not None:
-                _safe_neptune_log(neptune_run, 'val/loss', val_stats['loss'], step=epoch)
-                _safe_neptune_log(neptune_run, 'val/dice', val_stats['dice'], step=epoch)
+            if wandb_run is not None:
+                _safe_wandb_log(wandb_run, 'val/loss', val_stats['loss'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/dice', val_stats['dice'], step=epoch)
             did_validate = True
 
             if early_stopping_patience is not None:
@@ -290,20 +299,20 @@ def train(
                         torch.save(model.state_dict(), save_path)
                         best_model_path = save_path
                         print(f"Saved best model (val loss {best_val:.6f}) to {save_path}")
-                        if neptune_run is not None:
-                            _safe_neptune_log(neptune_run, 'best/model_path', save_path, step=epoch)
-                            _safe_neptune_log(neptune_run, 'best/val_loss', best_val, step=epoch)
-                            _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                        if wandb_run is not None:
+                            _safe_wandb_log(wandb_run, 'best/model_path', save_path, step=epoch)
+                            _safe_wandb_log(wandb_run, 'best/val_loss', best_val, step=epoch)
+                            _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
                 else:
                     epochs_since_improve += 1
-                    if neptune_run is not None:
-                        _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                    if wandb_run is not None:
+                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
 
                 if epochs_since_improve >= early_stopping_patience:
                     print(f"Early stopping triggered at epoch {epoch+1}. No improvement for {epochs_since_improve} validation checks.")
-                    if neptune_run is not None:
-                        _safe_neptune_log(neptune_run, 'early_stopping/stopped_epoch', epoch+1, step=epoch)
-                        _safe_neptune_log(neptune_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                    if wandb_run is not None:
+                        _safe_wandb_log(wandb_run, 'early_stopping/stopped_epoch', epoch+1, step=epoch)
+                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
                     break
 
         print(f"Epoch {epoch+1}/{epochs} | train loss: {train_stats['loss']:.4f} dice: {train_stats['dice']:.4f}", end='')
@@ -317,12 +326,12 @@ def train(
     history_out['best_val_loss'] = best_val if best_epoch >= 0 else None
     history_out['best_model_path'] = best_model_path
 
-    # Final neptune logs
-    if neptune_run is not None:
+    # Final wandb logs
+    if wandb_run is not None:
         if best_model_path is not None:
-            _safe_neptune_log(neptune_run, 'best/model_path', best_model_path)
-            _safe_neptune_log(neptune_run, 'best/val_loss', history_out['best_val_loss'])
-        _safe_neptune_log(neptune_run, 'training/epochs_ran', epoch+1)
-        _safe_neptune_log(neptune_run, 'training/best_epoch', best_epoch)
+            _safe_wandb_log(wandb_run, 'best/model_path', best_model_path)
+            _safe_wandb_log(wandb_run, 'best/val_loss', history_out['best_val_loss'])
+        _safe_wandb_log(wandb_run, 'training/epochs_ran', epoch+1)
+        _safe_wandb_log(wandb_run, 'training/best_epoch', best_epoch)
 
     return history_out

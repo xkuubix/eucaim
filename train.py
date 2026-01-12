@@ -1,5 +1,6 @@
 # %%
 import os
+import re
 PATH_ = '/users/project1/pt01190/EUCAIM-PG-GUM/code'
 if os.getcwd() != PATH_:
     os.chdir(PATH_)
@@ -7,9 +8,8 @@ from models import PatchUNet
 import torch
 import utils
 import yaml
-from monai.losses import GeneralizedDiceFocalLoss
 from net_utils import train, test
-import neptune
+import wandb
 
 
 parser = utils.get_args_parser()
@@ -20,11 +20,20 @@ with open(args.config) as file:
 selected_device = config['device']
 device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 
-if config["neptune"]:
-    run = neptune.init_run(project="ProjektMMG/Mammografia")
-    run["sys/group_tags"].add(["SEG"])
-    run["sys/group_tags"].add(["CLEAR-AI"])
-    run["config"] = config
+if config["use_wandb"]:
+    os.environ["WANDB_PROJECT"] = "EUC"
+    api = wandb.Api()
+    entity, project = "jb_pg", "eucaim"
+    runs = api.runs(entity + "/" + project)
+    run = wandb.init(entity=entity, project=project, config=config)
+    m = re.match(r".*-(\d+)$", run.name)
+    if m:
+        run.name = f"EUC-{m.group(1)}"
+    run.tags = run.tags + ("SEG",)
+    run.tags = run.tags + ("CLEAR-AI",)
+    run.tags = run.tags + ("dice dla +",)
+    run.tags = run.tags + ("undersampling",)
+    run.tags = run.tags + ("positive patients",)
 else:
     run = None
 
@@ -63,7 +72,7 @@ epochs = config['training_plan']['parameters'].get('epochs', 100)
 validate_every = config['training_plan']['parameters'].get('validate_every', 1)
 early_stopping_patience = config['training_plan']['parameters'].get('patience', None)
 if run:
-    checkpoint_path = os.path.join(config.get('model_path'), f"{run['sys/id'].fetch()}_best.pth")
+    checkpoint_path = os.path.join(config.get('model_path'), f"{run.name}_best.pth")
 else:
     checkpoint_path = os.path.join(config.get('model_path'), "interactive_best_model.pth")
 
@@ -77,7 +86,7 @@ history = train(
     validate_every=validate_every,
     early_stopping_patience=early_stopping_patience,
     save_path=checkpoint_path,
-    neptune_run=run
+    wandb_run=run
 )
 
 print('Training finished. History keys:', list(history.keys()))
@@ -88,5 +97,6 @@ if history.get('best_model_path'):
 test_stats = test(unet, dataloaders['test'], criterion, device)
 print('Test results:', test_stats)
 
+run.finish()
 # %%
 
