@@ -36,9 +36,9 @@ if config["use_wandb"]:
     run.tags = run.tags + ("positive patients",)
 else:
     run = None
-
 utils.reset_seed(config.get('seed', 42))
 dataloaders = utils.get_fold_dataloaders(config, 0)
+activation = config.get('activation', 'prelu').lower()
 
 unet = PatchUNet(
     config,
@@ -48,7 +48,7 @@ unet = PatchUNet(
     channels=(16, 32, 64, 128, 256, 512),
     strides=(2, 2, 2, 2, 2),
     num_res_units=2,
-    act='PReLU',
+    act=activation,
     dropout=0.1,
     kernel_size=3,
     up_kernel_size=3,
