@@ -8,6 +8,7 @@ import torch
 import utils
 import yaml
 import wandb
+from wandb_utils import fetch_wandb_runs_dataframe
 import matplotlib.pyplot as plt
 import torch
 from net_utils import _dice_from_logits_map
@@ -21,8 +22,11 @@ with open(args.config) as file:
 selected_device = config['device']
 device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 
-# todo add loading model from run
-run = None
+run_id = 'EUC-48'
+if run_id:
+    df = fetch_wandb_runs_dataframe("jb_pg/eucaim")
+    model_path = df[df['name']==run_id]['summary/best/model_path'].item()
+    print(f"Loading model from wandb run {run_id} at {model_path}")
 
 dataloaders = utils.get_fold_dataloaders(config, 0)
 activation = config.get('activation', 'prelu').lower()
@@ -44,8 +48,6 @@ unet = PatchUNet(
 ).to(device)
 
 
-model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1036_best.pth" # 256
-# model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1120_best.pth" # 512
 if model_path:
     unet.load_state_dict(torch.load(model_path, map_location=device))
 
