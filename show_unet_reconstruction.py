@@ -7,7 +7,6 @@ from models import PatchUNet
 import torch
 import utils
 import yaml
-import wandb
 from wandb_utils import fetch_wandb_runs_dataframe
 import matplotlib.pyplot as plt
 import torch
@@ -28,6 +27,10 @@ if run_id:
     model_path = df[df['name']==run_id]['summary/best/model_path'].item()
     print(f"Loading model from wandb run {run_id} at {model_path}")
 
+config['activation'] = df[df['name']==run_id]['config/activation'].item()
+config['data'] = df[df['name']==run_id]['config/data'].item()
+print("Reloaded config from wandb")
+
 dataloaders = utils.get_fold_dataloaders(config, 0)
 activation = config.get('activation', 'prelu').lower()
 
@@ -47,7 +50,8 @@ unet = PatchUNet(
     bias=False, # using norm
 ).to(device)
 
-
+# model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1036_best.pth" # 256
+# model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1120_best.pth" # 512
 if model_path:
     unet.load_state_dict(torch.load(model_path, map_location=device))
 
