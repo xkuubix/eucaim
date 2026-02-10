@@ -46,22 +46,6 @@ class PatchUNet(UNet):
         instances = instances.to(x.device)
         return instances, instances_ids, instances_coords
 
-
-    # def patch_image_and_mask(self, image, mask):
-    #     mask = mask.squeeze(0)
-    #     tiles = self.patcher.get_tiles(image.shape[1], image.shape[2])
-    #     instances, instances_idx, instances_coords = self.patcher.convert_img_to_bag(image)
-    #     mask_instances = []
-    #     for patch_coord in instances_coords:
-    #         i_id, j_id = patch_coord  # row and col in patch grid
-    #         idx = np.where((tiles[:, 4] == i_id) & (tiles[:, 5] == j_id))[0][0]
-    #         y, x, h, w = tiles[idx, 0:4].astype(int)  # real image coordinates
-    #         patch_mask = mask[y:y+h, x:x+w]           # slice mask for this patch
-    #         mask_instances.append(patch_mask)
-    #     mask_instances = torch.stack(mask_instances).unsqueeze(1)
-    #     return instances, mask_instances, instances_idx, instances_coords
-
-
     def patch_image_and_mask(self, image, mask, bg_threshold=0.01, bg_ratio=1.0):
         mask = mask.squeeze(0)
         tiles = self.patcher.get_tiles(image.shape[1], image.shape[2])
@@ -128,10 +112,12 @@ def main():
         norm='INSTANCE',
         bias=False, # using norm
     )
-    sample_input = torch.randn(20, 1, 512, 512)
+    sample_input = torch.randn(1, 512, 512)
     output = model(sample_input)
     print(output[0])
     print(output[0].shape)
+    print("bottleneck shape:", output[3].shape)
+    print(output[3])  # bottleneck data
     import matplotlib.pyplot as plt
     plt.imshow(output[0][0].squeeze(0).detach().cpu(),cmap='gray')
 
