@@ -1,8 +1,7 @@
 import os
 import torch
-import numpy as np
 from typing import Dict, Tuple, Optional, List, Any
-
+from wandb_utils import _safe_wandb_log
 
 def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> Tuple[float, int]:
     """
@@ -56,44 +55,6 @@ def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, threshold
         dice_per_image = 2 * tp / (2 * tp + fp + fn + 1e-7)
         return dice_per_image.mean().item()
 
-
-def _safe_wandb_log(run: Any, key: str, value: object, step: Optional[int] = None) -> None:
-    """Try to log a value to wandb/Neptune run. Works with both APIs.
-
-    This is intentionally permissive: if logging fails we silently continue so this file stays usable
-    even if wandb/Neptune isn't available at runtime.
-    """
-    if run is None:
-        return
-    try:
-        # Try wandb API first: run.log({'key': value}, step=step)
-        if hasattr(run, 'log') and callable(run.log):
-            log_dict = {key: value}
-            if step is not None:
-                run.log(log_dict, step=step)
-            else:
-                run.log(log_dict)
-            return
-    except Exception:
-        pass
-    
-    try:
-        # Fallback to Neptune API: run['key'].log(value, step=step)
-        target = run[key]
-        if step is None:
-            target.log(value)
-        else:
-            target.log(value, step=step)
-        return
-    except Exception:
-        pass
-    
-    try:
-        # Final fallback: direct assignment
-        run[key] = value
-    except Exception:
-        # give up silently
-        return
 
 
 def train_epoch(
