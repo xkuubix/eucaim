@@ -11,8 +11,59 @@ class PatchUNet(UNet):
         bag_size = config['data'].get('bag_size', -1)
         empty_thresh = config['data'].get('empty_threshold', 0.)
         self.patcher = ImagePatcher(patch_size=patch_size, overlap=overlap, bag_size=bag_size, empty_thresh=empty_thresh)
+        
+        # Feature extraction attributes
+        self.bottleneck_features = {}
+        self._hooks = []
 
-    def forward(self, x, mask=None):
+    def _find_and_register_hook(self, target_channels=512, source_channels=256):
+        """Find and register hook on bottleneck layer"""
+        def hook_fn(module, input, output):
+            self.bottleneck_features['bottleneck'] = output
+        
+        # Find the bottleneck Conv2d and hook its parent ResidualUnit
+        for name, module in self.model.named_modules():
+            if isinstance(module, torch.nn.Conv2d):
+                if module.out_channels == target_channels and module.in_channels == source_channels:
+                    # print(f"Found bottleneck conv at: {name}")
+                    parts = name.split('.')
+                    if len(parts) >= 2:
+                        parent_path = '.'.join(parts[:-2])
+                        parent_module = self.model
+                        for part in parent_path.split('.'):
+                            if part.isdigit():
+                                parent_module = parent_module[int(part)]
+                            else:
+                                parent_module = getattr(parent_module, part)
+                        
+                        # print(f"Hooking parent module at: {parent_path}")
+                        hook = parent_module.register_forward_hook(hook_fn)
+                        self._hooks.append(hook)
+                        break
+    
+    def _remove_hooks(self):
+        """Remove all registered hooks"""
+        for hook in self._hooks:
+            hook.remove()
+        self._hooks = []
+        self.bottleneck_features.clear()
+    
+    @contextmanager
+    def extract_features(self):
+        """Context manager for bottleneck feature extraction
+        
+        Usage:
+            with model.extract_features() as features:
+                output = model(x)
+                bottleneck = features['bottleneck']
+        """
+        self._find_and_register_hook()
+        try:
+            yield self.bottleneck_features
+        finally:
+            self._remove_hooks()
+
+    def forward(self, x, mask=None, return_features=False):
         C, H, W = x.shape
         ps = self.patcher.patch_size
 
@@ -23,7 +74,7 @@ class PatchUNet(UNet):
             padded_x = torch.zeros((C, new_H, new_W),
                                 device=x.device, dtype=x.dtype)
             padded_x[:, :H, :W] = x
-            x = padded_x                      # now [1,C,new_H,new_W]
+            x = padded_x
 
             if mask is not None:
                 padded_m = torch.zeros((C, new_H, new_W),
@@ -36,8 +87,13 @@ class PatchUNet(UNet):
         else:
             x, instances_ids, _ = self.patch_image(x)
             mask_patches = None
-        # x = self.norm_instances(x) # already in UNet
+        if return_features:
+            self.bottleneck_features.clear()
         pred_patches = super().forward(x)
+        
+        if return_features:
+            return pred_patches, mask_patches, instances_ids, self.bottleneck_features
+        
         return pred_patches, mask_patches, instances_ids 
     
     def patch_image(self, x):
