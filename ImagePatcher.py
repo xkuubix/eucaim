@@ -16,15 +16,15 @@ class ImagePatcher:
     def _start_points(self, size, split_size):
         points = [0]
         stride = int(split_size * (1 - self.overlap))
-        counter = 1
+        pt = 0
         while True:
-            pt = stride * counter
-            if pt + split_size >= size:
-                points.append(size - split_size)
+            pt = pt + stride
+            if pt + split_size > size:
                 break
-            else:
-                points.append(pt)
-            counter += 1
+            points.append(pt)
+        last = size - split_size
+        if last != points[-1]:
+            points.append(last)
         return points
 
     def get_tiles(self, h, w):
@@ -127,5 +127,5 @@ class ImagePatcher:
         else:
             raise ValueError("Invalid bag size")
         
-        instances_cords = tiles[instances_idx, 4:6]
+        instances_cords = tiles[instances_idx, 4:6].reshape(-1, 2)
         return shuffle(instances, instances_idx, instances_cords)
