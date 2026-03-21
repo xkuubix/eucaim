@@ -137,9 +137,11 @@ class ImageDataset(Dataset):
                 annotation_image = annotation_image[:, :, 0]  # Take the first slice if 3D
             # Convert annotation (numpy) to torch Tensor
             annotation = torch.from_numpy(np.asarray(annotation_image)).float()
+            annotation[annotation > 1] = 0.  # Binarize annotation
         
         sample = {}
-        sample['patientclass'] = torch.tensor(self.dataframe.iloc[idx]['patientclass'])
+        sample['classname'] = self.dataframe.iloc[idx]['classname']
+        sample['patientclass'] = torch.tensor([1 if sample['classname'] == 'malignant' else 0]).long()  # Binary label for malignant vs non-malignant
         sample['record_id'] = self.dataframe.iloc[idx]['record_id']
         sample['view'] = self.dataframe.iloc[idx]['view'].split('_')[0]  # 'CC' or 'MLO'
         sample['laterality'] = self.dataframe.iloc[idx]['view'].split('_')[1]  # 'L' or 'R'
