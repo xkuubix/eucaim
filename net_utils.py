@@ -71,32 +71,39 @@ def train_epoch(
     Returns a dict with average loss and average dice.
     """
     model.train()
-    running_loss = 0.0
-    running_dice = 0.0
-    n_items = 0
+    running = { "seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0 }
+    n_pos = 0
 
     for batch in dataloader:
         images = batch['image'].to(device)
         masks = batch['annotation'].to(device)
+        labels = batch['patientclass'].squeeze(0).to(device)
 
         optimizer.zero_grad()
-        preds_patched, masks_patched, _ = model(images, masks)
+        # TODO: guide attn as neg undersample (instead of seg_mask)?
+        preds_patched, masks_patched, _, cls_logits, attn, seg_mask = model(images, masks, bg_ratio=-1)
 
-        loss = criterion(preds_patched, masks_patched)
+        if seg_mask.any():
+            seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
+            dice_mean, _ = _binary_metrics_from_logits(preds_patched[seg_mask], masks_patched[seg_mask])
+            running["dice"] += dice_mean
+            n_pos += 1
+        else:
+            seg_loss = torch.tensor(0.0, device=device, requires_grad=True)
+
+        cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
+        running["cls_loss"] += float(cls_loss.item())
+        running["seg_loss"] += float(seg_loss.item())
+        loss = seg_loss + cls_loss * 0.3
         loss.backward()
         if clip_grad is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
         optimizer.step()
 
-        running_loss += float(loss.item()) * images.size(0)
-
-        dice_mean, cnt = _binary_metrics_from_logits(preds_patched, masks_patched)
-        running_dice += dice_mean * cnt
-        n_items += cnt
-
-    avg_loss = running_loss / max(1, len(dataloader.dataset))
-    avg_dice = running_dice / max(1, n_items)
-    return {"loss": avg_loss, "dice": avg_dice}
+    avg_dice = running["dice"] / max(1, n_pos)
+    avg_seg_loss = running["seg_loss"] / max(1, n_pos)
+    avg_cls_loss = running["cls_loss"] / max(1, len(dataloader))
+    return {"dice": avg_dice, "seg_loss": avg_seg_loss, "cls_loss": avg_cls_loss}
 
 
 def validate(
@@ -109,25 +116,48 @@ def validate(
     Run validation (no grad). Returns average loss and dice.
     """
     model.eval()
-    running_loss = 0.0
-    running_dice = 0.0
-    n_items = 0
-
+    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "lesion_detected": 0.0}
+    n_pos = 0
+    all_preds: List[Tuple[object, torch.Tensor]] = []
+    all_labels: List[torch.Tensor] = []
     with torch.no_grad():
         for batch in dataloader:
             images = batch['image'].to(device)
             masks = batch['annotation'].to(device)
+            labels = batch['patientclass'].squeeze(0).to(device)
 
-            preds_patched, masks_patched, instances_ids = model(images, masks)
-            pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
-            mask, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else None
-            loss = criterion(preds_patched, masks_patched)
-            running_dice += _dice_from_logits_map(pred, mask, threshold=0.5, patch_count=patch_count)
-            running_loss += float(loss.item())
+            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks)
+            all_preds.append(cls_logits.cpu())
+            all_labels.append(labels.cpu())
+            if seg_mask.any():
+                seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
+                pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
+                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
+                dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
+                running["dice"] += dice_mean
+                tp_image = (pred * mask_reconstructed).sum(dim=(-2,-1))
+                lesion_detected = (tp_image > 0).float().mean().item()
+                running["lesion_detected"] += lesion_detected
+                n_pos += 1
+            else:
+                seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
 
-    avg_loss = running_loss / max(1, len(dataloader.dataset))
-    avg_dice = running_dice / max(1, len(dataloader.dataset))
-    return {"loss": avg_loss, "dice": avg_dice}
+            cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
+            running["seg_loss"] += float(seg_loss)
+            running["cls_loss"] += float(cls_loss)
+
+    avg_seg_loss    = running["seg_loss"] / max(1, n_pos)  # average seg loss only over positive cases
+    avg_cls_loss    = running["cls_loss"] / max(1, len(dataloader))
+    avg_dice        = running["dice"] / max(1, n_pos)  # average dice only over positive cases
+    cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
+    
+    return {
+        "seg_loss": avg_seg_loss,
+        "cls_loss": avg_cls_loss,
+        "dice":     avg_dice,
+        "lesion_detected": running["lesion_detected"] / max(1, n_pos),
+        "cls_metrics": cls_metrics
+        }
 
 
 def test(
@@ -144,50 +174,59 @@ def test(
     If `return_predictions` is True, returns a list of (instances_ids, probs) per batch.
     """
     model.eval()
-    running_loss = 0.0
-    running_dice = 0.0
-    n_items = 0
+    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0}
+    running['px_fpr'] = 0.0
+    running['px_fnr'] = 0.0
+    running['px_tpr'] = 0.0
+    running['px_tnr'] = 0.0
+    n_pos = 0
+    n_neg = 0
+    all_preds: List[Tuple[object, torch.Tensor]] = []
+    all_labels: List[torch.Tensor] = []
     all_preds: List[Tuple[object, torch.Tensor]] = []
 
     with torch.no_grad():
         for batch in dataloader:
             images = batch['image'].to(device)
             masks = batch.get('annotation')
+            labels = batch.get('patientclass').squeeze(0).to(device) if batch.get('patientclass') is not None else None
             if masks is not None:
                 masks = masks.to(device)
 
-            preds_patched, masks_patched, instances_ids = model(images, masks if masks is not None else None)
+            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks)
+            all_preds.append(cls_logits.cpu())
+            all_labels.append(labels.cpu())
+            if labels == 1:
+                n_pos += 1
+                pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
+                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else None
+                seg_loss = criterion(pred, mask_reconstructed) if mask_reconstructed is not None else 0.0
+                running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, threshold=0.5, patch_count=patch_count)
+                fpr, fnr, tpr, tnr = _get_pred_rates_from_logits(pred, mask_reconstructed)
+                running['px_fpr'] += fpr
+                running['px_fnr'] += fnr
+                running['px_tpr'] += tpr
+                running['px_tnr'] += tnr
+            else:
+                seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
+                n_neg += 1
+            cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
+            running["seg_loss"] += float(seg_loss.item())
+            running["cls_loss"] += float(cls_loss.item())
 
-            if criterion is not None and masks is not None:
-                loss = criterion(preds_patched, masks_patched)
-                running_loss += float(loss.item()) * images.size(0)
 
-            if masks is not None:
-                dice_mean, cnt = _binary_metrics_from_logits(preds_patched, masks_patched)
-                running_dice += dice_mean * cnt
-                n_items += cnt
-
-            if return_predictions:
-                probs = torch.sigmoid(preds_patched).cpu()
-                all_preds.append((instances_ids, probs))
-
-    out: Dict[str, object] = {}
-    if criterion is not None and len(dataloader.dataset) > 0:
-        out['loss'] = running_loss / max(1, len(dataloader.dataset))
-    if n_items > 0:
-        out['dice'] = running_dice / n_items
-    if return_predictions:
-        out['predictions'] = all_preds
-    # wandb logging if provided
+    cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
     if wandb_run is not None:
-        if 'loss' in out:
-            _safe_wandb_log(wandb_run, 'test/loss', out['loss'])
-        if 'dice' in out:
-            _safe_wandb_log(wandb_run, 'test/dice', out['dice'])
-        if return_predictions:
-            _safe_wandb_log(wandb_run, 'test/n_predictions', len(all_preds))
-
-    return out
+        wandb_run.summary['test/seg/loss'] = running["seg_loss"] / max(1, n_pos)
+        wandb_run.summary['test/cls/loss'] = running["cls_loss"] / max(1, len(dataloader.dataset))
+        wandb_run.summary['test/seg/dice'] = running["dice"] / max(1, n_pos)
+        wandb_run.summary['test/cls/acc'] = cls_metrics['acc']
+        wandb_run.summary['test/cls/auroc'] = cls_metrics['auroc']
+        wandb_run.summary['test/cls/auprc'] = cls_metrics['auprc']
+        wandb_run.summary['test/seg/px_fpr'] = running['px_fpr'].mean().item() if n_pos > 0 else 0.0
+        wandb_run.summary['test/seg/px_fnr'] = running['px_fnr'].mean().item() if n_pos > 0 else 0.0
+        wandb_run.summary['test/seg/px_tpr'] = running['px_tpr'].mean().item() if n_pos > 0 else 0.0
+        wandb_run.summary['test/seg/px_tnr'] = running['px_tnr'].mean().item() if n_neg > 0 else 0.0
 
 
 def train(
@@ -210,9 +249,9 @@ def train(
 
     Returns history dict with lists for 'train_loss','train_dice','val_loss','val_dice' (when validation available).
     """
-    history = {"train_loss": [], "train_dice": []}
+    history = {"train_seg_loss": [], "train_cls_loss": [], "train_dice": []}
     if 'val' in dataloaders:
-        history.update({"val_loss": [], "val_dice": []})
+        history.update({"val_seg_loss": [], "val_cls_loss": [], "val_dice": [], "val_detection_rate": []})
 
     best_val = float('inf')
     best_epoch = -1
@@ -225,12 +264,14 @@ def train(
 
     for epoch in range(epochs):
         train_stats = train_epoch(model, dataloaders['train'], optimizer, criterion, device, clip_grad)
-        history['train_loss'].append(train_stats['loss'])
+        history['train_seg_loss'].append(train_stats['seg_loss'])
+        history['train_cls_loss'].append(train_stats['cls_loss'])
         history['train_dice'].append(train_stats['dice'])
 
         if wandb_run is not None:
-            _safe_wandb_log(wandb_run, 'train/loss', train_stats['loss'], step=epoch)
-            _safe_wandb_log(wandb_run, 'train/dice', train_stats['dice'], step=epoch)
+            _safe_wandb_log(wandb_run, 'train/seg/loss', train_stats['seg_loss'], step=epoch)
+            _safe_wandb_log(wandb_run, 'train/cls/loss', train_stats['cls_loss'], step=epoch)
+            _safe_wandb_log(wandb_run, 'train/seg/dice', train_stats['dice'], step=epoch)
 
         if scheduler is not None:
             try:
@@ -241,15 +282,22 @@ def train(
         did_validate = False
         if 'val' in dataloaders and ((epoch + 1) % validate_every == 0):
             val_stats = validate(model, dataloaders['val'], criterion, device)
-            history['val_loss'].append(val_stats['loss'])
+            history['val_seg_loss'].append(val_stats['seg_loss'])
+            history['val_cls_loss'].append(val_stats['cls_loss'])
             history['val_dice'].append(val_stats['dice'])
+
             if wandb_run is not None:
-                _safe_wandb_log(wandb_run, 'val/loss', val_stats['loss'], step=epoch)
-                _safe_wandb_log(wandb_run, 'val/dice', val_stats['dice'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/seg/loss', val_stats['seg_loss'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/cls/loss', val_stats['cls_loss'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/seg/dice', val_stats['dice'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/seg/lesion_detected', val_stats['lesion_detected'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/cls/acc', val_stats['cls_metrics']['acc'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/cls/auroc', val_stats['cls_metrics']['auroc'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/cls/auprc', val_stats['cls_metrics']['auprc'], step=epoch)
             did_validate = True
 
             if early_stopping_patience is not None:
-                current_val = val_stats['loss']
+                current_val = val_stats['seg_loss']
                 # improvement if decrease greater than min_delta
                 if current_val + min_delta < best_val:
                     best_val = current_val
@@ -276,9 +324,9 @@ def train(
                         _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
                     break
 
-        print(f"Epoch {epoch+1}/{epochs} | train loss: {train_stats['loss']:.4f} dice: {train_stats['dice']:.4f}", end='')
+        print(f"Epoch {epoch+1}/{epochs} | TRAIN SL: {train_stats['seg_loss']:.4f} CL: {train_stats['cls_loss']:.4f} D: {train_stats['dice']:.4f}", end='')
         if did_validate:
-            print(f" | val loss: {val_stats['loss']:.4f} val dice: {val_stats['dice']:.4f}")
+            print(f" | VAL SL: {val_stats['seg_loss']:.4f} CL: {val_stats['cls_loss']:.4f} D: {val_stats['dice']:.4f}, Detected: {val_stats['lesion_detected']:.4f}")
         else:
             print("")
 
@@ -292,7 +340,5 @@ def train(
         if best_model_path is not None:
             _safe_wandb_log(wandb_run, 'best/model_path', best_model_path)
             _safe_wandb_log(wandb_run, 'best/val_loss', history_out['best_val_loss'])
-        _safe_wandb_log(wandb_run, 'training/epochs_ran', epoch+1)
-        _safe_wandb_log(wandb_run, 'training/best_epoch', best_epoch)
 
     return history_out
