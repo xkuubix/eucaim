@@ -64,7 +64,9 @@ class ImagePatcher:
     
     def reconstruct_image_from_patches(self, patches, instances_ids, image_shape):
         tiles = self.tiles
-        c, h, w = image_shape
+        h = max(tile[0] + tile[2] for tile in tiles)
+        w = max(tile[1] + tile[3] for tile in tiles)
+        c, _, _ = image_shape
         
         reconstructed_image = torch.zeros(c, h, w, dtype=torch.float, device=patches.device)
         patch_count = torch.zeros(c, h, w, dtype=torch.float, device=patches.device)
@@ -77,6 +79,11 @@ class ImagePatcher:
             patch_count[:, h_min:h_min + dh, w_min:w_min + dw] += 1
 
         counts = torch.where(patch_count == 0, torch.ones_like(patch_count), patch_count)
+        H_orig, W_orig = image_shape[1], image_shape[2]
+        reconstructed_image = reconstructed_image[:, :H_orig, :W_orig]
+        patch_count = patch_count[:, :H_orig, :W_orig]
+        counts = counts[:, :H_orig, :W_orig]
+        
         return reconstructed_image/counts, patch_count 
 
 
