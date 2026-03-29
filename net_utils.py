@@ -46,6 +46,7 @@ def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, threshold
         probs = torch.sigmoid(logits)
         mask_valid = patch_count > 0
         probs[~mask_valid] = 0.
+        targets[~mask_valid] = 0.
         preds = (probs > threshold).float()
         dims = tuple(range(1, preds.dim()))  # sum over spatial dims
         tp = (preds * targets).sum(dim=dims)
