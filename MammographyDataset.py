@@ -99,7 +99,18 @@ class ImageDataset(Dataset):
             dataframe (pd.DataFrame): DataFrame with columns for DICOM and annotation paths.
             transform (callable, optional): Optional transform to be applied on a sample.
         """
-        data_long = make_long_format(dataframe, ['record_id', 'patientclass', 'laterality'])
+        var_list = [
+            'record_id',
+            'patientclass',
+            'laterality',
+            'L1_radiological_assessment',
+            'L1_laterality',
+            'L2_radiological_assessment',
+            'L2_laterality',
+            'L3_radiological_assessment',
+            'L3_laterality',
+            ]
+        data_long = make_long_format(dataframe, var_list)
         df_rest = data_long[data_long['patientclass'] != 0]
 
         # only take malignant breast images in malignant patients
@@ -135,10 +146,20 @@ class ImageDataset(Dataset):
             annotation_image = nib.load(annotation_path).get_fdata()
             if annotation_image.ndim == 3:
                 annotation_image = annotation_image[:, :, 0]  # Take the first slice if 3D
-            # Convert annotation (numpy) to torch Tensor
+
             annotation = torch.from_numpy(np.asarray(annotation_image)).float()
-            annotation[annotation > 1] = 0.  # Binarize annotation
-        
+
+            if self.dataframe.iloc[idx]['L1_radiological_assessment'] != 'malign':
+                annotation[annotation == 1.] = 0.
+            if self.dataframe.iloc[idx]['L2_radiological_assessment'] != 'malign':
+                annotation[annotation == 2.] = 0.
+            if self.dataframe.iloc[idx]['L3_radiological_assessment'] != 'malign':
+                annotation[annotation == 3.] = 0.
+            
+            annotation[annotation > 3.] = 0.  # 4 and 5 as 0
+            annotation = (annotation > 0).float()  # ← binarize here
+            # in train 1395 pos labels and 1300 non empty masks
+            
         sample = {}
         sample['classname'] = self.dataframe.iloc[idx]['classname']
         sample['patientclass'] = torch.tensor([1 if sample['classname'] == 'malignant' else 0]).long()  # Binary label for malignant vs non-malignant
@@ -157,7 +178,6 @@ class ImageDataset(Dataset):
         if annotation is None:
             annotation = torch.zeros_like(image)
         sample['image'], sample['annotation'] = crop_to_breast(image, annotation)
-        # sample['annotation'] = annotation
         return sample
 
 if __name__ == '__main__':
