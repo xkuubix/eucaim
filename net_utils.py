@@ -134,12 +134,14 @@ def validate(
                 seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
                 pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
                 mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
-                dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
-                running["dice"] += dice_mean
-                tp_image = (pred * mask_reconstructed).sum(dim=(-2,-1))
-                lesion_detected = (tp_image > 0).float().mean().item()
-                running["lesion_detected"] += lesion_detected
-                n_pos += 1
+                if labels > 0:
+                    dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
+                    running["dice"] += dice_mean
+                    pred = (pred > 0.5).float()
+                    tp_image = (pred * mask_reconstructed).sum(dim=(-2,-1))
+                    lesion_detected = (tp_image > 0).float().mean().item()
+                    running["lesion_detected"] += lesion_detected
+                    n_pos += 1
             else:
                 seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
 
