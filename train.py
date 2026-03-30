@@ -94,9 +94,9 @@ if history.get('best_model_path'):
     print('Best model saved to:', history['best_model_path'])
 
 # Run final test
-test_stats = test(unet, dataloaders['test'], criterion, device)
-print('Test results:', test_stats)
+test(unet, dataloaders['test'], criterion, device, wandb_run=run)
 
-run.finish()
+if run:
+    run.finish()
 # %%
 
