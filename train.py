@@ -26,9 +26,6 @@ if config["use_wandb"]:
     entity, project = "jb_pg", "eucaim"
     runs = api.runs(entity + "/" + project)
     run = wandb.init(entity=entity, project=project, config=config)
-    m = re.match(r".*-(\d+)$", run.name)
-    if m:
-        run.name = f"EUC-{m.group(1)}"
     run.tags = run.tags + ("SEG",)
     run.tags = run.tags + ("CLEAR-AI",)
     run.tags = run.tags + ("dice dla +",)
@@ -72,7 +69,7 @@ epochs = config['training_plan']['parameters'].get('epochs', 100)
 validate_every = config['training_plan']['parameters'].get('validate_every', 1)
 early_stopping_patience = config['training_plan']['parameters'].get('patience', None)
 if run:
-    checkpoint_path = os.path.join(config.get('model_path'), f"{run.name}_best.pth")
+    checkpoint_path = os.path.join(config.get('model_path'), f"{run.id}_best.pth")
 else:
     checkpoint_path = os.path.join(config.get('model_path'), "interactive_best_model.pth")
 
