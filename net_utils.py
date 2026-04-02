@@ -1,7 +1,28 @@
 import os
+from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 from typing import Dict, Tuple, Optional, List, Any
 from wandb_utils import _safe_wandb_log
+from sklearn.metrics import roc_auc_score, average_precision_score
+
+
+def _pixel_auprc(logits: torch.Tensor, targets: torch.Tensor, patch_count: torch.Tensor = None) -> float:
+    with torch.no_grad():
+        probs = torch.sigmoid(logits)
+        
+        if patch_count is not None:
+            mask_valid = patch_count > 0
+            probs   = probs[mask_valid]
+            targets = targets[mask_valid]
+        
+        probs_np   = probs.cpu().numpy().ravel()
+        targets_np = targets.cpu().numpy().ravel().astype(int)
+
+        if targets_np.sum() == 0:  # no positive pixels
+            return float('nan')
+
+        return average_precision_score(targets_np, probs_np)
+    
 
 def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> Tuple[float, int]:
     """
@@ -16,7 +37,6 @@ def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
         preds = (probs > threshold).float()
         # sum over spatial dims
         dims = tuple(range(1, preds.dim()))
-
         tp = (preds * targets).sum(dim=dims)
         fp = (preds * (1 - targets)).sum(dim=dims)
         fn = ((1 - preds) * targets).sum(dim=dims)
@@ -38,39 +58,75 @@ def _binary_metrics_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
     return float(dice_mean), int(n_items)
 
 
-def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5, patch_count: Optional[torch.Tensor] = None) -> float:
+def _dice_from_logits_map(logits: torch.Tensor, targets: torch.Tensor, patch_count: torch.Tensor, threshold: float = 0.5) -> float:
     """
     Compute Dice score for a batch of reconstructed full-image logits.
     """
     with torch.no_grad():
         probs = torch.sigmoid(logits)
         mask_valid = patch_count > 0
-        probs[~mask_valid] = 0.
-        targets[~mask_valid] = 0.
+
+        probs = probs[mask_valid]
+        targets = targets[mask_valid]
+        
         preds = (probs > threshold).float()
-        dims = tuple(range(1, preds.dim()))  # sum over spatial dims
-        tp = (preds * targets).sum(dim=dims)
-        fp = (preds * (1 - targets)).sum(dim=dims)
-        fn = ((1 - preds) * targets).sum(dim=dims)
 
-        dice_per_image = 2 * tp / (2 * tp + fp + fn + 1e-7)
-        return dice_per_image.mean().item()
+        tp = (preds * targets).sum()
+        fp = (preds * (1 - targets)).sum()
+        fn = ((1 - preds) * targets).sum()
 
+        return (2 * tp / (2 * tp + fp + fn + 1e-7)).item()
 
 
-def train_epoch(
-        model: torch.nn.Module,
-        dataloader: torch.utils.data.DataLoader,
-        optimizer: torch.optim.Optimizer,
-        criterion: torch.nn.Module,
-        device: torch.device,
-        clip_grad: Optional[float] = None,
-        ) -> Dict[str, float]:
+def classification_metrics(logits, targets):
     """
-    Run one training epoch.
-
-    Returns a dict with average loss and average dice.
+    Args:
+        logits:  list of [1, num_classes] tensors
+        targets: list of int labels
     """
+    logits  = torch.cat(logits, dim=0)          # [N, C]
+    probs   = logits.softmax(dim=-1)[:, 1]      # positive class prob
+    preds   = logits.argmax(dim=-1)
+    targets = torch.tensor(targets)
+
+    probs_np   = probs.detach().cpu().numpy()
+    targets_np = targets.numpy()
+    preds_np   = preds.detach().cpu().numpy()
+
+    acc  = (preds == targets).float().mean().item()
+    auroc = roc_auc_score(targets_np, probs_np)
+    auprc = average_precision_score(targets_np, probs_np)  # better than AUROC for imbalanced
+
+    return {'acc': acc, 'auroc': auroc, 'auprc': auprc}
+
+
+def _get_pred_rates_from_logits(logits: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> Tuple[float, float]:
+    """
+    Compute positive and negative prediction rates for a batch given raw logits (not probabilities).
+
+    Returns:
+        fpr: false positive rate (predicted positive but actually negative)
+        fnr: false negative rate (predicted negative but actually positive)
+        tpr: true positive rate (predicted positive and actually positive)
+        tnr: true negative rate (predicted negative and actually negative)
+    """
+    with torch.no_grad():
+        probs = torch.sigmoid(logits)
+        preds = (probs > threshold).float()
+
+        tp = ((preds == 1) & (targets == 1)).sum().item()
+        fp = ((preds == 1) & (targets == 0)).sum().item()
+        fn = ((preds == 0) & (targets == 1)).sum().item()
+        tn = ((preds == 0) & (targets == 0)).sum().item()
+
+        fpr = fp / (fp + tn + 1e-7)
+        fnr = fn / (tp + fn + 1e-7)
+        tpr = tp / (tp + fn + 1e-7)
+        tnr = tn / (fp + tn + 1e-7)
+    return fpr, fnr, tpr, tnr
+
+
+def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None):
     model.train()
     running = { "seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0 }
     n_pos = 0
@@ -117,7 +173,7 @@ def validate(
     Run validation (no grad). Returns average loss and dice.
     """
     model.eval()
-    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "lesion_detected": 0.0}
+    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0, "lesion_detected": 0.0}
     n_pos = 0
     all_preds: List[Tuple[object, torch.Tensor]] = []
     all_labels: List[torch.Tensor] = []
@@ -136,28 +192,31 @@ def validate(
                 mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
                 if labels > 0:
                     dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
+                    auprc = _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
                     running["dice"] += dice_mean
-                    pred = (pred > 0.5).float()
+                    running["auprc"] += auprc
+                    pred = (torch.sigmoid(pred) > 0.5).float()
                     tp_image = (pred * mask_reconstructed).sum(dim=(-2,-1))
                     lesion_detected = (tp_image > 0).float().mean().item()
                     running["lesion_detected"] += lesion_detected
+                    running["seg_loss"] += float(seg_loss)
                     n_pos += 1
-            else:
-                seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
+
 
             cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
-            running["seg_loss"] += float(seg_loss)
             running["cls_loss"] += float(cls_loss)
 
     avg_seg_loss    = running["seg_loss"] / max(1, n_pos)  # average seg loss only over positive cases
     avg_cls_loss    = running["cls_loss"] / max(1, len(dataloader))
     avg_dice        = running["dice"] / max(1, n_pos)  # average dice only over positive cases
+    avg_auprc       = running["auprc"] / max(1, n_pos)  # average auprc only over positive cases
     cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
     
     return {
         "seg_loss": avg_seg_loss,
         "cls_loss": avg_cls_loss,
         "dice":     avg_dice,
+        "auprc":    avg_auprc,
         "lesion_detected": running["lesion_detected"] / max(1, n_pos),
         "cls_metrics": cls_metrics
         }
@@ -168,7 +227,6 @@ def test(
     dataloader: torch.utils.data.DataLoader,
     criterion: Optional[torch.nn.Module],
     device: torch.device,
-    return_predictions: bool = False,
     wandb_run: Optional[Any] = None,
 ) -> Dict[str, object]:
     """
@@ -177,7 +235,7 @@ def test(
     If `return_predictions` is True, returns a list of (instances_ids, probs) per batch.
     """
     model.eval()
-    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0}
+    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0}
     running['px_fpr'] = 0.0
     running['px_fnr'] = 0.0
     running['px_tpr'] = 0.0
@@ -205,6 +263,7 @@ def test(
                 mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else None
                 seg_loss = criterion(pred, mask_reconstructed) if mask_reconstructed is not None else 0.0
                 running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, threshold=0.5, patch_count=patch_count)
+                running["auprc"] += _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
                 fpr, fnr, tpr, tnr = _get_pred_rates_from_logits(pred, mask_reconstructed)
                 running['px_fpr'] += fpr
                 running['px_fnr'] += fnr
@@ -223,6 +282,7 @@ def test(
         wandb_run.summary['test/seg/loss'] = running["seg_loss"] / max(1, n_pos)
         wandb_run.summary['test/cls/loss'] = running["cls_loss"] / max(1, len(dataloader.dataset))
         wandb_run.summary['test/seg/dice'] = running["dice"] / max(1, n_pos)
+        wandb_run.summary['test/seg/auprc'] = running["auprc"] / max(1, n_pos)
         wandb_run.summary['test/cls/acc'] = cls_metrics['acc']
         wandb_run.summary['test/cls/auroc'] = cls_metrics['auroc']
         wandb_run.summary['test/cls/auprc'] = cls_metrics['auprc']
@@ -252,9 +312,9 @@ def train(
 
     Returns history dict with lists for 'train_loss','train_dice','val_loss','val_dice' (when validation available).
     """
-    history = {"train_seg_loss": [], "train_cls_loss": [], "train_dice": []}
+    history = {"train_seg_loss": [], "train_cls_loss": [], "train_dice": [], "train_auprc": []}
     if 'val' in dataloaders:
-        history.update({"val_seg_loss": [], "val_cls_loss": [], "val_dice": [], "val_detection_rate": []})
+        history.update({"val_seg_loss": [], "val_cls_loss": [], "val_dice": [], "val_auprc": [], "val_detection_rate": []})
 
     best_val = float('inf')
     best_epoch = -1
@@ -288,11 +348,14 @@ def train(
             history['val_seg_loss'].append(val_stats['seg_loss'])
             history['val_cls_loss'].append(val_stats['cls_loss'])
             history['val_dice'].append(val_stats['dice'])
+            history['val_auprc'].append(val_stats['auprc'])
+            history['val_detection_rate'].append(val_stats['lesion_detected'])
 
             if wandb_run is not None:
                 _safe_wandb_log(wandb_run, 'val/seg/loss', val_stats['seg_loss'], step=epoch)
                 _safe_wandb_log(wandb_run, 'val/cls/loss', val_stats['cls_loss'], step=epoch)
                 _safe_wandb_log(wandb_run, 'val/seg/dice', val_stats['dice'], step=epoch)
+                _safe_wandb_log(wandb_run, 'val/seg/auprc', val_stats['auprc'], step=epoch)
                 _safe_wandb_log(wandb_run, 'val/seg/lesion_detected', val_stats['lesion_detected'], step=epoch)
                 _safe_wandb_log(wandb_run, 'val/cls/acc', val_stats['cls_metrics']['acc'], step=epoch)
                 _safe_wandb_log(wandb_run, 'val/cls/auroc', val_stats['cls_metrics']['auroc'], step=epoch)
@@ -314,17 +377,17 @@ def train(
                         if wandb_run is not None:
                             _safe_wandb_log(wandb_run, 'best/model_path', save_path, step=epoch)
                             _safe_wandb_log(wandb_run, 'best/val_loss', best_val, step=epoch)
-                            _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                            _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
                 else:
                     epochs_since_improve += 1
                     if wandb_run is not None:
-                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
 
                 if epochs_since_improve >= early_stopping_patience:
                     print(f"Early stopping triggered at epoch {epoch+1}. No improvement for {epochs_since_improve} validation checks.")
                     if wandb_run is not None:
                         _safe_wandb_log(wandb_run, 'early_stopping/stopped_epoch', epoch+1, step=epoch)
-                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve)
+                        _safe_wandb_log(wandb_run, 'early_stopping/patience', early_stopping_patience - epochs_since_improve, step=epoch)
                     break
 
         print(f"Epoch {epoch+1}/{epochs} | TRAIN SL: {train_stats['seg_loss']:.4f} CL: {train_stats['cls_loss']:.4f} D: {train_stats['dice']:.4f}", end='')
@@ -341,7 +404,8 @@ def train(
     # Final wandb logs
     if wandb_run is not None:
         if best_model_path is not None:
-            _safe_wandb_log(wandb_run, 'best/model_path', best_model_path)
-            _safe_wandb_log(wandb_run, 'best/val_loss', history_out['best_val_loss'])
+            wandb_run.summary['best/model_path'] = best_model_path
+            wandb_run.summary['best/val_loss'] = history_out['best_val_loss']
+            wandb_run.summary['best/epoch'] = best_epoch
 
     return history_out
