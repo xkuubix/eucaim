@@ -188,8 +188,12 @@ def validate(
             all_labels.append(labels.cpu())
             if seg_mask.any():
                 seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
-                pred, patch_count = model.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
-                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
+                pred, patch_count = model.patcher.reconstruct_image_from_patches(
+                    preds_patched.cpu(), instances_ids, image_shape=images.shape
+                    )  # (c, h, w)
+                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(
+                    masks_patched.cpu(), instances_ids, image_shape=images.shape
+                    )
                 if labels > 0:
                     dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
                     auprc = _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
@@ -202,9 +206,10 @@ def validate(
                     running["seg_loss"] += float(seg_loss)
                     n_pos += 1
 
-
             cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
             running["cls_loss"] += float(cls_loss)
+            del pred, mask_reconstructed, preds_patched, masks_patched,
+            torch.cuda.empty_cache()
 
     avg_seg_loss    = running["seg_loss"] / max(1, n_pos)  # average seg loss only over positive cases
     avg_cls_loss    = running["cls_loss"] / max(1, len(dataloader))
