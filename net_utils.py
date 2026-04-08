@@ -291,10 +291,10 @@ def test(
         wandb_run.summary['test/cls/acc'] = cls_metrics['acc']
         wandb_run.summary['test/cls/auroc'] = cls_metrics['auroc']
         wandb_run.summary['test/cls/auprc'] = cls_metrics['auprc']
-        wandb_run.summary['test/seg/px_fpr'] = running['px_fpr'].mean().item() if n_pos > 0 else 0.0
-        wandb_run.summary['test/seg/px_fnr'] = running['px_fnr'].mean().item() if n_pos > 0 else 0.0
-        wandb_run.summary['test/seg/px_tpr'] = running['px_tpr'].mean().item() if n_pos > 0 else 0.0
-        wandb_run.summary['test/seg/px_tnr'] = running['px_tnr'].mean().item() if n_neg > 0 else 0.0
+        wandb_run.summary['test/seg/px_fpr'] = running['px_fpr'] / max(1, n_pos)
+        wandb_run.summary['test/seg/px_fnr'] = running['px_fnr'] / max(1, n_pos)
+        wandb_run.summary['test/seg/px_tpr'] = running['px_tpr'] / max(1, n_pos)
+        wandb_run.summary['test/seg/px_tnr'] = running['px_tnr'] / max(1, n_neg)
 
 
 def train(
