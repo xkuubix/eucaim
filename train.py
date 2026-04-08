@@ -59,9 +59,18 @@ criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
 
 if config['training_plan'].get('optimizer') == 'adam':
-    optimizer = torch.optim.Adam(unet.parameters(), lr=config['training_plan']['parameters']['lr'])
+    optimizer = torch.optim.Adam(
+        unet.parameters(),
+        lr=config['training_plan']['parameters']['lr'],
+        weight_decay=config['training_plan']['parameters']['wd']
+    )
 elif config['training_plan'].get('optimizer') == 'sgd':
-    optimizer = torch.optim.SGD(unet.parameters(), lr=config['training_plan']['parameters']['lr'], momentum=0.9)
+    optimizer = torch.optim.SGD(
+        unet.parameters(),
+        lr=config['training_plan']['parameters']['lr'],
+        weight_decay=config['training_plan']['parameters']['wd'],
+        momentum=0.9
+    )
 else:
     raise ValueError(f"Unsupported optimizer type: {config['training_plan'].get('optimizer')}")
 
