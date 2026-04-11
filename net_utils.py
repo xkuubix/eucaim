@@ -128,40 +128,62 @@ def _get_pred_rates_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
 
 def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None):
     model.train()
-    running = { "seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0 }
+    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0}
     n_pos = 0
+    grad_acc_steps = 8
 
-    for batch in dataloader:
+    optimizer.zero_grad()
+
+    for step, batch in enumerate(dataloader):
         images = batch['image'].to(device)
-        masks = batch['annotation'].to(device)
-        labels = batch['patientclass'].squeeze(0).to(device)
+        masks  = batch['annotation'].to(device)
+        labels = batch['patientclass'].squeeze(0).to(device).long()
 
-        optimizer.zero_grad()
-        # TODO: guide attn as neg undersample (instead of seg_mask)?
-        preds_patched, masks_patched, _, cls_logits, attn, seg_mask = model(images, masks, bg_ratio=-1)
+        preds_patched, masks_patched, _, cls_logits, attn, seg_mask = model(
+            images, masks, bg_threshold=0.01, bg_ratio=2.0
+        )
 
-        if seg_mask.any():
-            seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
-            dice_mean, _ = _binary_metrics_from_logits(preds_patched[seg_mask], masks_patched[seg_mask])
-            running["dice"] += dice_mean
-            n_pos += 1
+        # --- segmentation loss (positive cases only) ---
+        if labels.item() > 0 and seg_mask is not None and seg_mask.any():
+            selected_preds = preds_patched[seg_mask]
+            selected_masks = masks_patched[seg_mask]
+            seg_loss = criterion(selected_preds, selected_masks)
+
+            with torch.no_grad():
+                has_fg = selected_masks.flatten(1).sum(dim=1) > 0
+                if has_fg.any():
+                    dice_mean, _ = _binary_metrics_from_logits(
+                        selected_preds[has_fg],
+                        selected_masks[has_fg]
+                    )
+                    running["dice"] += dice_mean
+                    n_pos += 1
         else:
-            seg_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            seg_loss = torch.tensor(0.0, device=device)
 
-        cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
-        running["cls_loss"] += float(cls_loss.item())
-        running["seg_loss"] += float(seg_loss.item())
-        loss = seg_loss + cls_loss * 0.3
-        loss.backward()
-        if clip_grad is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
-        optimizer.step()
+        # --- classification loss ---
+        cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels)
 
-    avg_dice = running["dice"] / max(1, n_pos)
-    avg_seg_loss = running["seg_loss"] / max(1, n_pos)
-    avg_cls_loss = running["cls_loss"] / max(1, len(dataloader))
-    return {"dice": avg_dice, "seg_loss": avg_seg_loss, "cls_loss": avg_cls_loss}
+        running["seg_loss"] += seg_loss.item()
+        running["cls_loss"] += cls_loss.item()
 
+        total_loss = (seg_loss + cls_loss * 0.5) / grad_acc_steps
+        total_loss.backward()
+
+        if (step + 1) % grad_acc_steps == 0 or (step + 1) == len(dataloader):
+            if clip_grad is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
+            optimizer.step()
+            optimizer.zero_grad()
+            torch.cuda.empty_cache()
+
+    n_batches = len(dataloader)
+    return {
+        "seg_loss": running["seg_loss"] / n_batches,
+        "cls_loss": running["cls_loss"] / n_batches,
+        "dice":     running["dice"]     / max(1, n_pos),
+    }
+# 
 
 def validate(
     model: torch.nn.Module,
@@ -186,29 +208,32 @@ def validate(
             preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks)
             all_preds.append(cls_logits.cpu())
             all_labels.append(labels.cpu())
-            if seg_mask.any():
-                seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
-                pred, patch_count = model.patcher.reconstruct_image_from_patches(
-                    preds_patched.cpu(), instances_ids, image_shape=images.shape
-                    )  # (c, h, w)
-                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(
-                    masks_patched.cpu(), instances_ids, image_shape=images.shape
-                    )
-                if labels > 0:
-                    dice_mean = _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
-                    auprc = _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
-                    running["dice"] += dice_mean
-                    running["auprc"] += auprc
-                    pred = (torch.sigmoid(pred) > 0.5).float()
-                    tp_image = (pred * mask_reconstructed).sum(dim=(-2,-1))
-                    lesion_detected = (tp_image > 0).float().mean().item()
-                    running["lesion_detected"] += lesion_detected
-                    running["seg_loss"] += float(seg_loss)
-                    n_pos += 1
-
-            cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
+            cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels)
             running["cls_loss"] += float(cls_loss)
-            del pred, mask_reconstructed, preds_patched, masks_patched,
+            if labels.item() > 0 and seg_mask is not None and seg_mask.any():
+                preds_cpu = preds_patched.cpu()
+                masks_cpu = masks_patched.cpu()
+                seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
+                running["seg_loss"] += float(seg_loss.item())
+                pred, patch_count = model.patcher.reconstruct_image_from_patches(
+                    preds_cpu, instances_ids, image_shape=images.shape
+                )
+                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(
+                    masks_cpu, instances_ids, image_shape=images.shape
+                )
+                running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
+                running["auprc"] += _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
+                probs = torch.sigmoid(pred)
+                pred_binary = (probs > 0.5).float()
+                valid = patch_count > 0
+                pred_binary[~valid] = 0.
+                tp_image = (pred_binary * mask_reconstructed).sum(dim=(-2, -1))
+                running["lesion_detected"] += (tp_image > 0).float().mean().item()
+
+                n_pos += 1
+                del pred, mask_reconstructed, preds_cpu, masks_cpu, pred_binary
+
+            del preds_patched, masks_patched, images, masks, cls_logits, attn
             torch.cuda.empty_cache()
 
     avg_seg_loss    = running["seg_loss"] / max(1, n_pos)  # average seg loss only over positive cases
@@ -321,7 +346,7 @@ def train(
     if 'val' in dataloaders:
         history.update({"val_seg_loss": [], "val_cls_loss": [], "val_dice": [], "val_auprc": [], "val_detection_rate": []})
 
-    best_val = float('inf')
+    best_val = float('-inf')
     best_epoch = -1
     epochs_since_improve = 0
     best_model_path: Optional[str] = None
@@ -368,9 +393,9 @@ def train(
             did_validate = True
 
             if early_stopping_patience is not None:
-                current_val = val_stats['seg_loss']
-                # improvement if decrease greater than min_delta
-                if current_val + min_delta < best_val:
+                current_val = val_stats['dice']
+                # improvement if increase greater than min_delta
+                if current_val > best_val + min_delta:
                     best_val = current_val
                     best_epoch = epoch
                     epochs_since_improve = 0
