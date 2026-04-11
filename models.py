@@ -4,6 +4,7 @@ from monai.networks.nets import UNet
 from ImagePatcher import ImagePatcher
 import numpy as np
 from contextlib import contextmanager
+import math
 
 
 class AttentionMIL(nn.Module):
@@ -39,7 +40,10 @@ class PatchUNet(UNet):
         patch_size = config['data'].get('patch_size', 128)
         overlap = config['data'].get('overlap', 0.)
         bag_size = config['data'].get('bag_size', -1)
+        self._bag_size = bag_size
         empty_thresh = config['data'].get('empty_threshold', 0.)
+        self._overla_train = config['data'].get('overlap_train', overlap)
+        self._overlap_eval = config['data'].get('overlap_eval', overlap)
         self.patcher = ImagePatcher(patch_size=patch_size, overlap=overlap, bag_size=bag_size, empty_thresh=empty_thresh)
         self._bottleneck_features = {}
         self._hooks = []
@@ -48,7 +52,19 @@ class PatchUNet(UNet):
         bottleneck_channels = config.get('bottleneck_channels', 512)
         self.mil = AttentionMIL(bottleneck_channels, mil_hidden, num_classes) \
                    if num_classes is not None else None
-
+    
+    def train(self, mode=True):
+        super().train(mode)
+        if mode:
+            self.patcher.bag_size = self._bag_size
+            self.patcher.overlap = self._overla_train
+            print(f"Training mode: bag_size set to {self.patcher.bag_size}, overlap set to {self.patcher.overlap}")
+        else:
+            self.patcher.bag_size = -1
+            self.patcher.overlap = self._overlap_eval
+            print(f"Evaluation mode: bag_size set to {self.patcher.bag_size}, overlap set to {self.patcher.overlap}")
+        return self
+    
     def _register_bottleneck_hook(self, target_channels=512, source_channels=256):
         def hook_fn(module, input, output):
             self._bottleneck_features['bottleneck'] = output
@@ -103,43 +119,44 @@ class PatchUNet(UNet):
             y, x, h, w = tiles[idx, 0:4].astype(int)
             mask_instances.append(mask[y:y+h, x:x+w])
         mask_instances = torch.stack(mask_instances).unsqueeze(1)
-
         return (instances.to(image.device),
                 mask_instances.to(mask.device),
                 instances_idx,
                 instances_coords)
 
-    def get_seg_loss_mask(self, mask_patches: torch.Tensor,
-                          bg_threshold: float = 0.01,
-                          bg_ratio: float = 1.0) -> torch.Tensor:
-        """Boolean mask selecting which patches to include in seg loss.
-
-        Keeps all positive patches; randomly undersamples negatives.
-        At inference, returns all-True (no undersampling).
-
-        Args:
-            mask_patches: [N, 1, H, W]
-        Returns:
-            keep: [N] bool
+    def get_seg_loss_mask(self, mask_patches, attn_weights, bg_threshold=0.01, bg_ratio=1.0):
         """
+        Selects all positive patches and the 'hardest' negative patches 
+        based on MIL attention scores.
+        """
+        # 1. Identify Positives vs Negatives
         roi_frac = mask_patches.flatten(1).mean(dim=1)
-        pos_idx  = torch.where(roi_frac >  bg_threshold)[0]
-        neg_idx  = torch.where(roi_frac <= bg_threshold)[0]
+        pos_mask = roi_frac > bg_threshold
+        neg_mask = ~pos_mask
+        
+        pos_idx = torch.where(pos_mask)[0]
+        neg_idx = torch.where(neg_mask)[0]
 
+        # if not self.training or bg_ratio < 0:
+        #     return torch.ones(len(mask_patches), dtype=torch.bool, device=mask_patches.device)
 
-        if self.training and bg_ratio >= 0:
-            if len(pos_idx) == 0:
-                min_neg = 32
-                # keep a minimum number of negatives
-                k = min(neg_idx.numel(), min_neg)  # e.g. 32 or 64
-                neg_idx = neg_idx[torch.randperm(len(neg_idx), device=neg_idx.device)[:k]]
+        if len(pos_idx) == 0:
+            n_neg_keep = min(len(neg_idx), 64)
+        else:
             n_neg_keep = int(bg_ratio * len(pos_idx))
-            if len(neg_idx) > n_neg_keep:
-                neg_idx = neg_idx[torch.randperm(len(neg_idx), device=neg_idx.device)[:n_neg_keep]]
 
-        keep = torch.zeros(mask_patches.shape[0], dtype=torch.bool, device=mask_patches.device)
+        if len(neg_idx) > n_neg_keep and attn_weights is not None:
+            neg_attn = attn_weights[neg_idx].squeeze()
+            _, top_k_sub_indices = torch.topk(neg_attn, n_neg_keep)
+            selected_neg_idx = neg_idx[top_k_sub_indices]
+        else:
+            perm = torch.randperm(len(neg_idx), device=neg_idx.device)
+            selected_neg_idx = neg_idx[perm[:n_neg_keep]]
+
+        # 4. Construct Boolean Mask
+        keep = torch.zeros(len(mask_patches), dtype=torch.bool, device=mask_patches.device)
         keep[pos_idx] = True
-        keep[neg_idx] = True
+        keep[selected_neg_idx] = True
         return keep
 
     # ------------------------------------------------------------------
@@ -169,13 +186,10 @@ class PatchUNet(UNet):
             mask_patches = None
         # Single forward pass, MIL sees all patches
         with self._bottleneck_ctx() as feats:
+            # x = self.norm_instances(x)
             pred_patches = super().forward(x)
             bottleneck = feats.get('bottleneck')
 
-        # Undersampling mask for seg loss (only used during training with mask)
-        seg_loss_mask = None
-        if mask_patches is not None:
-            seg_loss_mask = self.get_seg_loss_mask(mask_patches, bg_threshold, bg_ratio)
 
         # MIL over all patches
         cls_logits, attn_weights = None, None
@@ -183,7 +197,21 @@ class PatchUNet(UNet):
             H_patches = self.gap(bottleneck).squeeze(-1).squeeze(-1)  # [N, C]
             cls_logits, attn_weights = self.mil(H_patches)
 
+        # Undersampling mask for seg loss (only used during training with mask)
+        seg_loss_mask = None
+        if mask_patches is not None:
+            seg_loss_mask = self.get_seg_loss_mask(mask_patches, attn_weights=attn_weights.detach(), bg_threshold=bg_threshold, bg_ratio=bg_ratio)
+
         return pred_patches, mask_patches, instances_ids, cls_logits, attn_weights, seg_loss_mask
+
+    def norm_instances(self, patch: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        """
+        patch: [C, H, W]
+        Zero-mean unit-variance per channel, then rescale to [0,1]
+        """
+        mean = patch.mean(dim=(-2, -1), keepdim=True)
+        std  = patch.std(dim=(-2, -1), keepdim=True)
+        return (patch - mean) / (std + eps)
 
 
 if __name__ == "__main__":
@@ -192,7 +220,7 @@ if __name__ == "__main__":
 
     # --- build a minimal config matching default hook channels ---
     config = {
-        'data': {'patch_size': 512, 'overlap': 0., 'bag_size': -1, 'empty_threshold': 0.},
+        'data': {'patch_size': 512, 'overlap_train': 0.5, 'overlap_eval': 0.875, 'bag_size': 10, 'empty_threshold': 0.},
         'bottleneck_channels': 512,
     }
 
