@@ -401,7 +401,14 @@ def train(
                     epochs_since_improve = 0
                     # save best model
                     if save_path is not None:
-                        torch.save(model.state_dict(), save_path)
+                        checkpoint = {
+                            'epoch': epoch,
+                            'model': model,
+                            'optimizer': optimizer,
+                            # 'lr_sched': lr_sched
+                            }
+                        torch.save(checkpoint, save_path)
+                        # torch.save(model.state_dict(), save_path)
                         best_model_path = save_path
                         print(f"Saved best model (val loss {best_val:.6f}) to {save_path}")
                         if wandb_run is not None:

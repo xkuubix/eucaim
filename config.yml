@@ -4,6 +4,7 @@ device: 'cuda'
 
 model_path: '/users/scratch1/jbuler/eucaim/models'
 
+resume_from_run: False # 'apricot-valley-174' # None or wandb run id to resume from
 data:
   num_classes: 2
   cv_folds: 5

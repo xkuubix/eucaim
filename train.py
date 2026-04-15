@@ -4,6 +4,7 @@ import re
 PATH_ = '/users/project1/pt01190/EUCAIM-PG-GUM/code'
 if os.getcwd() != PATH_:
     os.chdir(PATH_)
+from wandb_utils import fetch_wandb_runs_dataframe
 from models import PatchUNet
 import torch
 import utils
@@ -57,33 +58,47 @@ loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
+if config.get('resume_from_run'):
+    run_id = config['resume_from_run']
+    checkpoint_path = os.path.join(config.get('model_path'), f"{run_id}_best.pth")
 
-if config['training_plan'].get('optimizer') == 'adam':
-    optimizer = torch.optim.Adam(
-        unet.parameters(),
-        lr=config['training_plan']['parameters']['lr'],
-        weight_decay=config['training_plan']['parameters']['wd']
-    )
-elif config['training_plan'].get('optimizer') == 'sgd':
-    optimizer = torch.optim.SGD(
-        unet.parameters(),
-        lr=config['training_plan']['parameters']['lr'],
-        weight_decay=config['training_plan']['parameters']['wd'],
-        momentum=0.9
-    )
+    df = fetch_wandb_runs_dataframe("jb_pg/eucaim_cls")
+    model_path = df[df['name']==run_id]['summary/best/model_path'].item()
+    
+    print(f"Loading model from wandb run {run_id} at {model_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    epoch = checkpoint['epoch']
+    model = checkpoint['model']
+    optimizer = checkpoint['optimizer']
+    # lr_sched = checkpoint['lr_sched']
 else:
-    raise ValueError(f"Unsupported optimizer type: {config['training_plan'].get('optimizer')}")
+    if config['training_plan'].get('optimizer') == 'adam':
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config['training_plan']['parameters']['lr'],
+            weight_decay=config['training_plan']['parameters']['wd']
+        )
+    elif config['training_plan'].get('optimizer') == 'sgd':
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=config['training_plan']['parameters']['lr'],
+            weight_decay=config['training_plan']['parameters']['wd'],
+            momentum=0.9
+        )
+    else:
+        raise ValueError(f"Unsupported optimizer type: {config['training_plan'].get('optimizer')}")
 
 epochs = config['training_plan']['parameters'].get('epochs', 100)
 validate_every = config['training_plan']['parameters'].get('validate_every', 1)
 early_stopping_patience = config['training_plan']['parameters'].get('patience', None)
 if run:
-    checkpoint_path = os.path.join(config.get('model_path'), f"{run.id}_best.pth")
+    save_path = os.path.join(config.get('model_path'), f"{run.id}_best.pth")
 else:
-    checkpoint_path = os.path.join(config.get('model_path'), "interactive_best_model.pth")
+    save_path = os.path.join(config.get('model_path'), "interactive_best_model.pth")
 
 history = train(
-    unet,
+    model,
     dataloaders,
     optimizer,
     criterion,
@@ -91,7 +106,7 @@ history = train(
     epochs=epochs,
     validate_every=validate_every,
     early_stopping_patience=early_stopping_patience,
-    save_path=checkpoint_path,
+    save_path=save_path,
     wandb_run=run
 )
 
@@ -100,7 +115,7 @@ if history.get('best_model_path'):
     print('Best model saved to:', history['best_model_path'])
 
 # Run final test
-test(unet, dataloaders['test'], criterion, device, wandb_run=run)
+test(model, dataloaders['test'], criterion, device, wandb_run=run)
 
 if run:
     run.finish()
