@@ -1,14 +1,12 @@
 # %%
-import os
-import re
+import os, sys
+sys.dont_write_bytecode = True
 PATH_ = '/users/project1/pt01190/EUCAIM-PG-GUM/code'
 if os.getcwd() != PATH_:
     os.chdir(PATH_)
 from wandb_utils import fetch_wandb_runs_dataframe
 from models import PatchUNet
-import torch
-import utils
-import yaml
+import torch, utils, yaml, wandb
 from net_utils import train, test
 import wandb
 
@@ -38,8 +36,10 @@ utils.reset_seed(config.get('seed', 42))
 dataloaders = utils.get_fold_dataloaders(config, 0)
 activation = config.get('activation', 'prelu').lower()
 
-unet = PatchUNet(
+model = PatchUNet(
     config,
+    num_classes=2,
+    mil_hidden=128,
     spatial_dims=2,
     in_channels=1,
     out_channels=1,
@@ -58,18 +58,19 @@ loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
-if config.get('resume_from_run'):
+if config.get('resume_from_run') != '-':
     run_id = config['resume_from_run']
-    checkpoint_path = os.path.join(config.get('model_path'), f"{run_id}_best.pth")
 
     df = fetch_wandb_runs_dataframe("jb_pg/eucaim_cls")
-    model_path = df[df['name']==run_id]['summary/best/model_path'].item()
     
-    print(f"Loading model from wandb run {run_id} at {model_path}")
+    run_name = df[df['name'] == run_id]['run_id'].values[0] 
+    checkpoint_path = os.path.join(config.get('model_path'), f"{run_name}_best.pth")
+    
+    print(f"Loading model from wandb run {run_id} at {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     epoch = checkpoint['epoch']
-    model = checkpoint['model']
+    model = checkpoint['model'].to(device)
     optimizer = checkpoint['optimizer']
     # lr_sched = checkpoint['lr_sched']
 else:
@@ -115,6 +116,9 @@ if history.get('best_model_path'):
     print('Best model saved to:', history['best_model_path'])
 
 # Run final test
+del optimizer
+torch.cuda.empty_cache()
+torch.cuda.synchronize()
 test(model, dataloaders['test'], criterion, device, wandb_run=run)
 
 if run:
