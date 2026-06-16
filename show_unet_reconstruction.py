@@ -23,7 +23,7 @@ device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 
 run_id = 'EUC-48'
 if run_id:
-    df = fetch_wandb_runs_dataframe("jb_pg/eucaim")
+    df = fetch_wandb_runs_dataframe("jb_pg/eucaim_cls")
     model_path = df[df['name']==run_id]['summary/best/model_path'].item()
     print(f"Loading model from wandb run {run_id} at {model_path}")
 
@@ -31,11 +31,15 @@ config['activation'] = df[df['name']==run_id]['config/activation'].item()
 config['data'] = df[df['name']==run_id]['config/data'].item()
 print("Reloaded config from wandb")
 
+config['data']['overlap'] = 0.875
+
 dataloaders = utils.get_fold_dataloaders(config, 0)
 activation = config.get('activation', 'prelu').lower()
 
 unet = PatchUNet(
     config,
+    num_classes=2,
+    mil_hidden=128,
     spatial_dims=2,
     in_channels=1,
     out_channels=1,
@@ -53,13 +57,21 @@ unet = PatchUNet(
 # model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1036_best.pth" # 256
 # model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1120_best.pth" # 512
 if model_path:
-    unet.load_state_dict(torch.load(model_path, map_location=device))
-
+    ckpt = torch.load(
+        model_path,
+        map_location='cpu',
+        weights_only=False
+        )
+    print(f"Loading model from {model_path} [{ckpt['epoch']}]")
+    unet =ckpt['model']
 loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
 unet.eval()
+unet.to(device)
+# %%
 i = 0
+all_dice_scores = []
 with torch.no_grad():
     for batch in dataloaders['test']:
         images = batch['image'].to(device)
@@ -68,7 +80,10 @@ with torch.no_grad():
         pred, patch_count = unet.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
         mask, _ = unet.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else (None, None)
 
-        fig, axs = plt.subplots(1, 4, figsize=(12, 6))
+        dice = _dice_from_logits_map(pred, mask, patch_count=patch_count) if mask is not None else None
+        all_dice_scores.append(dice)
+        print(f"Dice: {dice:.4f}" if dice is not None else "Dice: N/A")
+        fig, axs = plt.subplots(1, 5, figsize=(12, 6))
         axs[0].imshow(images[0].cpu(), cmap='gray')
         axs[0].set_title('input')
         axs[1].imshow(mask[0].cpu(), cmap='gray')
@@ -81,7 +96,9 @@ with torch.no_grad():
         axs[2].set_title('pred 0.5 th')
         axs[3].imshow(probs[0].cpu(), cmap='hot')
         axs[3].set_title('pred raw')
-        
+        axs[4].imshow(att_weights_reconstructed[0].cpu(), cmap='hot')
+        axs[4].set_title('attention weights')
+
         for ax in axs:
             ax.set_xticks([])
             ax.set_yticks([])
