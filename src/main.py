@@ -2,7 +2,14 @@
 import os
 import sys
 import pandas as pd
-from file_manipulation import make_table, add_dicom_and_annotation_paths, drop_na, drop_ambiguous_rows, filter_both_views_present_or_absent, drop_class0_no_annotations
+from file_manipulation import (
+    make_table,
+    add_dicom_and_annotation_paths,
+    drop_na,
+    drop_ambiguous_rows,
+    filter_both_views_present_or_absent,
+    drop_class0_no_annotations,
+)
 from rts2nii import rtstruct2nii
 import pickle
 
