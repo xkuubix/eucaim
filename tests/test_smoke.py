@@ -3,7 +3,7 @@ import torch
 
 
 def get_model():
-    from src.models import PatchUNet
+    from mammography_tool.models import PatchUNet
 
     config = {
         "data": {
