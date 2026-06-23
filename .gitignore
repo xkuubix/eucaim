@@ -7,3 +7,4 @@ images/
 wandb
 .pytest_cache/
 *temp-*
+mytool.egg-info
