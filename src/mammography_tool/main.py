@@ -1,8 +1,7 @@
 # %%
 import os
-import sys
 import pandas as pd
-from .file_manipulation import (
+from mammography_tool.file_manipulation import (
     make_table,
     add_dicom_and_annotation_paths,
     drop_na,
@@ -10,14 +9,11 @@ from .file_manipulation import (
     filter_both_views_present_or_absent,
     drop_class0_no_annotations,
 )
-from rts2nii import rtstruct2nii
+from mammography_tool.rts2nii import rtstruct2nii
 import pickle
-
-sys.path.append("./code/src")
 
 
 def main():
-
     os.chdir("/users/project1/pt01190/EUCAIM-PG-GUM/code")
 
     # DICOM_DIR = os.path.join('../euc_gumed_u6_v2')

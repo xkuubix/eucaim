@@ -1,16 +1,13 @@
 # %%
-import os
-import utils as utils
 import yaml
 import matplotlib.pyplot as plt
 import torch
-from .models import PatchUNet
-from .wandb_utils import fetch_wandb_runs_dataframe
-from .net_utils import _dice_from_logits_map
+from mammography_tool import utils
+from mammography_tool.models import PatchUNet
+from mammography_tool.wandb_utils import fetch_wandb_runs_dataframe
+from mammography_tool.net_utils import _dice_from_logits_map
 
 PATH_ = "/users/project1/pt01190/EUCAIM-PG-GUM/code"
-if os.getcwd() != PATH_:
-    os.chdir(PATH_)
 
 parser = utils.get_args_parser()
 args, unknown = parser.parse_known_args()

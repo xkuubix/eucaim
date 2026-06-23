@@ -6,3 +6,4 @@ images/
 *.neptune
 wandb
 .pytest_cache/
+*temp-*

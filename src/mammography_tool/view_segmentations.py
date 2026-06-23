@@ -6,7 +6,7 @@ import nibabel as nib
 import matplotlib.pyplot as plt
 import pickle
 from tqdm import tqdm
-from .dicom_utils import get_pixels_no_voi
+from mammography_tool.dicom_utils import get_pixels_no_voi
 
 sys.path.append("./code")
 

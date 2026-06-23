@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from monai.networks.nets import UNet
-from .ImagePatcher import ImagePatcher
+from mammography_tool.ImagePatcher import ImagePatcher
 import numpy as np
 from contextlib import contextmanager
 import math

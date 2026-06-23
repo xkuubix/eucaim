@@ -1,12 +1,12 @@
 # %%
-from .wandb_utils import fetch_wandb_runs_dataframe
-from .models import PatchUNet
-from net_utils import train, test
+from mammography_tool.wandb_utils import fetch_wandb_runs_dataframe
+from mammography_tool.models import PatchUNet
+from mammography_tool.net_utils import train, test
 import gc
 import os
 import sys
 import torch
-import utils
+import mammography_tool.utils as utils
 import yaml
 import wandb
 

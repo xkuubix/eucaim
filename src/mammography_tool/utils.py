@@ -9,12 +9,12 @@ from typing import Counter, Dict
 from pandas import DataFrame
 from sklearn.model_selection import KFold
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-from .MammographyDataset import ImageDataset
+from mammography_tool.MammographyDataset import ImageDataset
 from monai.losses import DiceLoss, DiceCELoss, GeneralizedDiceLoss, DiceFocalLoss, GeneralizedDiceFocalLoss
 
 
 def get_args_parser():
-    default = "/users/project1/pt01190/EUCAIM-PG-GUM/code/config.yml"
+    default = "/users/project1/pt01190/EUCAIM-PG-GUM/code/src/configs/config.yml"
     help = """path to .yml config file
     specyfying datasets/training params"""
 

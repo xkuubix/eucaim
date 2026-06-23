@@ -2,7 +2,7 @@ import os
 from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 from typing import Dict, Tuple, Optional, List, Any
-from .wandb_utils import _safe_wandb_log
+from mammography_tool.wandb_utils import _safe_wandb_log
 
 
 def _pixel_auprc(logits: torch.Tensor, targets: torch.Tensor, patch_count: torch.Tensor = None) -> float:
