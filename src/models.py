@@ -13,12 +13,13 @@ class AttentionMIL(nn.Module):
     A(h) = softmax( tanh(V h) ⊙ sigmoid(U h) )
     z     = Σ A(h_k) h_k
     """
+
     def __init__(self, in_dim: int, hidden_dim: int = 128, num_classes: int = 1):
         super().__init__()
         self.attention_V = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.Tanh())
         self.attention_U = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.Sigmoid())
         self.attention_w = nn.Linear(hidden_dim, 1)
-        self.classifier  = nn.Linear(in_dim, num_classes)
+        self.classifier = nn.Linear(in_dim, num_classes)
 
     def forward(self, H: torch.Tensor):
         """
@@ -29,30 +30,29 @@ class AttentionMIL(nn.Module):
             weights: [N_patches, 1]
         """
         A = self.attention_w(self.attention_V(H) * self.attention_U(H))  # [N, 1]
-        A = torch.softmax(A, dim=0)                                       # [N, 1]
-        z = (A * H).sum(dim=0, keepdim=True)                              # [1, C]
+        A = torch.softmax(A, dim=0)  # [N, 1]
+        z = (A * H).sum(dim=0, keepdim=True)  # [1, C]
         return self.classifier(z), A
 
 
 class PatchUNet(UNet):
     def __init__(self, config, num_classes=None, mil_hidden=128, *args, **kwds):
         super().__init__(*args, **kwds)
-        patch_size = config['data'].get('patch_size', 128)
-        overlap = config['data'].get('overlap', 0.)
-        bag_size = config['data'].get('bag_size', -1)
+        patch_size = config["data"].get("patch_size", 128)
+        overlap = config["data"].get("overlap", 0.0)
+        bag_size = config["data"].get("bag_size", -1)
         self._bag_size = bag_size
-        empty_thresh = config['data'].get('empty_threshold', 0.)
-        self._overla_train = config['data'].get('overlap_train', overlap)
-        self._overlap_eval = config['data'].get('overlap_eval', overlap)
+        empty_thresh = config["data"].get("empty_threshold", 0.0)
+        self._overla_train = config["data"].get("overlap_train", overlap)
+        self._overlap_eval = config["data"].get("overlap_eval", overlap)
         self.patcher = ImagePatcher(patch_size=patch_size, overlap=overlap, bag_size=bag_size, empty_thresh=empty_thresh)
         self._bottleneck_features = {}
         self._hooks = []
         self.gap = nn.AdaptiveAvgPool2d(1)
 
-        bottleneck_channels = config.get('bottleneck_channels', 512)
-        self.mil = AttentionMIL(bottleneck_channels, mil_hidden, num_classes) \
-                   if num_classes is not None else None
-    
+        bottleneck_channels = config.get("bottleneck_channels", 512)
+        self.mil = AttentionMIL(bottleneck_channels, mil_hidden, num_classes) if num_classes is not None else None
+
     def train(self, mode=True):
         super().train(mode)
         if mode:
@@ -64,19 +64,21 @@ class PatchUNet(UNet):
             self.patcher.overlap = self._overlap_eval
             print(f"Evaluation mode: bag_size set to {self.patcher.bag_size}, overlap set to {self.patcher.overlap}")
         return self
-    
+
     def _register_bottleneck_hook(self, target_channels=512, source_channels=256):
         def hook_fn(module, input, output):
-            self._bottleneck_features['bottleneck'] = output
+            self._bottleneck_features["bottleneck"] = output
 
         for name, module in self.model.named_modules():
-            if (isinstance(module, nn.Conv2d)
-                    and module.out_channels == target_channels
-                    and module.in_channels == source_channels):
-                parts = name.split('.')
+            if (
+                isinstance(module, nn.Conv2d)
+                and module.out_channels == target_channels
+                and module.in_channels == source_channels
+            ):
+                parts = name.split(".")
                 if len(parts) >= 2:
                     parent = self.model
-                    for part in '.'.join(parts[:-2]).split('.'):
+                    for part in ".".join(parts[:-2]).split("."):
                         parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
                     self._hooks.append(parent.register_forward_hook(hook_fn))
                     break
@@ -117,23 +119,20 @@ class PatchUNet(UNet):
             i_id, j_id = patch_coord
             idx = np.where((tiles[:, 4] == i_id) & (tiles[:, 5] == j_id))[0][0]
             y, x, h, w = tiles[idx, 0:4].astype(int)
-            mask_instances.append(mask[y:y+h, x:x+w])
+            mask_instances.append(mask[y : y + h, x : x + w])
         mask_instances = torch.stack(mask_instances).unsqueeze(1)
-        return (instances.to(image.device),
-                mask_instances.to(mask.device),
-                instances_idx,
-                instances_coords)
+        return (instances.to(image.device), mask_instances.to(mask.device), instances_idx, instances_coords)
 
     def get_seg_loss_mask(self, mask_patches, attn_weights, bg_threshold=0.01, bg_ratio=1.0):
         """
-        Selects all positive patches and the 'hardest' negative patches 
+        Selects all positive patches and the 'hardest' negative patches
         based on MIL attention scores.
         """
         # 1. Identify Positives vs Negatives
         roi_frac = mask_patches.flatten(1).mean(dim=1)
         pos_mask = roi_frac > bg_threshold
         neg_mask = ~pos_mask
-        
+
         pos_idx = torch.where(pos_mask)[0]
         neg_idx = torch.where(neg_mask)[0]
 
@@ -188,8 +187,7 @@ class PatchUNet(UNet):
         with self._bottleneck_ctx() as feats:
             # x = self.norm_instances(x)
             pred_patches = super().forward(x)
-            bottleneck = feats.get('bottleneck')
-
+            bottleneck = feats.get("bottleneck")
 
         # MIL over all patches
         cls_logits, attn_weights = None, None
@@ -200,7 +198,9 @@ class PatchUNet(UNet):
         # Undersampling mask for seg loss (only used during training with mask)
         seg_loss_mask = None
         if mask_patches is not None:
-            seg_loss_mask = self.get_seg_loss_mask(mask_patches, attn_weights=None, bg_threshold=bg_threshold, bg_ratio=bg_ratio)
+            seg_loss_mask = self.get_seg_loss_mask(
+                mask_patches, attn_weights=None, bg_threshold=bg_threshold, bg_ratio=bg_ratio
+            )
 
         return pred_patches, mask_patches, instances_ids, cls_logits, attn_weights, seg_loss_mask
 
@@ -210,7 +210,7 @@ class PatchUNet(UNet):
         Zero-mean unit-variance per channel, then rescale to [0,1]
         """
         mean = patch.mean(dim=(-2, -1), keepdim=True)
-        std  = patch.std(dim=(-2, -1), keepdim=True)
+        std = patch.std(dim=(-2, -1), keepdim=True)
         return (patch - mean) / (std + eps)
 
 
@@ -220,8 +220,8 @@ if __name__ == "__main__":
 
     # --- build a minimal config matching default hook channels ---
     config = {
-        'data': {'patch_size': 512, 'overlap_train': 0.5, 'overlap_eval': 0.875, 'bag_size': 10, 'empty_threshold': 0.},
-        'bottleneck_channels': 512,
+        "data": {"patch_size": 512, "overlap_train": 0.5, "overlap_eval": 0.875, "bag_size": 10, "empty_threshold": 0.0},
+        "bottleneck_channels": 512,
     }
 
     model = PatchUNet(
@@ -238,18 +238,18 @@ if __name__ == "__main__":
     ).eval()
 
     sample_input = torch.randn(1, 1024, 1025)
-    sample_mask  = (torch.rand(1, 1024, 1025) > 1.95).float()  # sparse positive mask
-    image_label  = torch.tensor([1])                          # positive image
+    sample_mask = (torch.rand(1, 1024, 1025) > 1.95).float()  # sparse positive mask
+    image_label = torch.tensor([1])  # positive image
 
     # ------------------------------------------------------------------
     # 1. Segmentation only (no mask → no seg_loss_mask)
     # ------------------------------------------------------------------
     print("=== 1. Seg only ===")
     pred, masks, ids, cls_logits, attn, seg_mask = model(sample_input)
-    print(f"  pred shape:      {pred.shape}")          # [N_patches, 1, 128, 128]
-    print(f"  cls_logits:      {cls_logits}")          # [1, 2]
-    print(f"  attn_weights:    {attn.shape}")          # [N_patches, 1]
-    print(f"  seg_loss_mask:   {seg_mask}")            # None
+    print(f"  pred shape:      {pred.shape}")  # [N_patches, 1, 128, 128]
+    print(f"  cls_logits:      {cls_logits}")  # [1, 2]
+    print(f"  attn_weights:    {attn.shape}")  # [N_patches, 1]
+    print(f"  seg_loss_mask:   {seg_mask}")  # None
 
     # ------------------------------------------------------------------
     # 2. Seg + mask → seg_loss_mask computed
@@ -262,8 +262,8 @@ if __name__ == "__main__":
     print(f"  seg mask keeps:  {seg_mask.sum().item()} / {seg_mask.shape[0]} patches")
     print(f"  pred[seg_mask]:  {pred[seg_mask].shape}")
     print(f"  masks[seg_mask]: {masks[seg_mask].shape}")
-    print(f"  cls_logits:      {cls_logits}")          # [1, 2]
-    print(f"  attn_weights:    {attn.shape}")          # [N_patches, 1]
+    print(f"  cls_logits:      {cls_logits}")  # [1, 2]
+    print(f"  attn_weights:    {attn.shape}")  # [N_patches, 1]
     print(f"{reconstructed_image[0].shape=}")
     # ------------------------------------------------------------------
     # 3. MIL bag-level prediction
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     model.eval()
     pred, masks, ids, cls_logits, attn, seg_mask = model(sample_input, sample_mask)
     print(f"  predicted class: {cls_logits.argmax(dim=-1).item()}")
-    print(f"  cls_logits:      {cls_logits}")          # [1, 2]
+    print(f"  cls_logits:      {cls_logits}")  # [1, 2]
     print(f"  attn_weights:    min={attn.min():.4f}  max={attn.max():.4f}  sum={attn.sum():.4f}")
     top_k = attn.squeeze(1).topk(3)
     print(f"  top-3 patches:   idx={top_k.indices.tolist()}  scores={[f'{v:.4f}' for v in top_k.values.tolist()]}")
@@ -283,21 +283,26 @@ if __name__ == "__main__":
     n_show = min(4, pred.shape[0])
     fig, axes = plt.subplots(2, n_show, figsize=(n_show * 3, 6))
     for i in range(n_show):
-        axes[0, i].imshow(pred[i, 0].detach().cpu(), cmap='gray')
+        axes[0, i].imshow(pred[i, 0].detach().cpu(), cmap="gray")
         axes[0, i].set_title(f"pred patch {i}\nattn={attn[i].item():.3f}")
-        axes[0, i].axis('off')
+        axes[0, i].axis("off")
         if masks is not None:
-            axes[1, i].imshow(masks[i, 0].detach().cpu(), cmap='gray')
+            axes[1, i].imshow(masks[i, 0].detach().cpu(), cmap="gray")
             axes[1, i].set_title(f"mask patch {i}")
-            axes[1, i].axis('off')
-    plt.suptitle(f"Bag pred: class={cls_logits.argmax(dim=-1).item()}  "
-                 f"logits={cls_logits.detach().cpu().numpy().round(2)}")
+            axes[1, i].axis("off")
+    plt.suptitle(
+        f"Bag pred: class={cls_logits.argmax(dim=-1).item()}  " f"logits={cls_logits.detach().cpu().numpy().round(2)}"
+    )
     plt.tight_layout()
     plt.show()
 
     preds_patched, masks_patched, instances_ids, cls_logits, att_weights, seg_mask = model(sample_input)
-    att_reconstructed, _ = model.patcher.reconstruct_image_from_patches(att_weights, instances_ids, image_shape=sample_input.shape) if att_weights is not None else (None, None)
-    img_patched, att_patches, instances_ids, _  = model.patch_image_and_mask(sample_input, att_reconstructed)
+    att_reconstructed, _ = (
+        model.patcher.reconstruct_image_from_patches(att_weights, instances_ids, image_shape=sample_input.shape)
+        if att_weights is not None
+        else (None, None)
+    )
+    img_patched, att_patches, instances_ids, _ = model.patch_image_and_mask(sample_input, att_reconstructed)
 
     print(img_patched.shape, att_patches.shape, preds_patched.shape)
 

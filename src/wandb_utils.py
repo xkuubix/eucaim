@@ -45,7 +45,7 @@ def _safe_wandb_log(run: Any, key: str, value: object, step: Optional[int] = Non
         return
     try:
         # Try wandb API first: run.log({'key': value}, step=step)
-        if hasattr(run, 'log') and callable(run.log):
+        if hasattr(run, "log") and callable(run.log):
             log_dict = {key: value}
             if step is not None:
                 run.log(log_dict, step=step)
@@ -54,7 +54,7 @@ def _safe_wandb_log(run: Any, key: str, value: object, step: Optional[int] = Non
             return
     except Exception:
         pass
-    
+
     try:
         # Fallback to Neptune API: run['key'].log(value, step=step)
         target = run[key]
@@ -65,7 +65,7 @@ def _safe_wandb_log(run: Any, key: str, value: object, step: Optional[int] = Non
         return
     except Exception:
         pass
-    
+
     try:
         # Final fallback: direct assignment
         run[key] = value

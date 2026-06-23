@@ -1,7 +1,11 @@
-#%%
+# %%
 from typing import List
 import pandas as pd
-import pydicom, logging, json, glob, os
+import pydicom
+import logging
+import json
+import glob
+import os
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -10,25 +14,28 @@ logging.basicConfig(level=logging.ERROR)
 
 class Counter:
     count_var = 0  # static counter variable
+
     def __init__(self):
         pass
+
     def count():
         """Increments the counter and returns the current count."""
         Counter.count_var += 1
         return Counter.count_var
 
+
 def get_json_info(folder: os.PathLike) -> dict:
     """Returns json info from given folder of single dicom series
-    
+
     Parameters
     - folder: str or PathLike or file-like object
     """
-    
+
     json_info = {}
     for root, _, files in os.walk(folder, topdown=False):
         for name in files:
-            if name.startswith('form_') and name.endswith(".json"):
-                with open(os.path.join(root, name), 'r') as f:
+            if name.startswith("form_") and name.endswith(".json"):
+                with open(os.path.join(root, name), "r") as f:
                     json_file = json.load(f)
                     json_info.update({name: json_file})
     if not json_info:
@@ -37,7 +44,7 @@ def get_json_info(folder: os.PathLike) -> dict:
     return json_info
 
 
-def make_table(path: str)-> None:
+def make_table(path: str) -> None:
     """
     Convert RTSTRUCT DICOM files to NIfTI format.
 
@@ -58,51 +65,50 @@ def make_table(path: str)-> None:
 
 
 def make_header_dict(folders: list) -> dict:
-    json_keys = {'subject': set(), 'lesion': set()}
-    logger.info('Creating header dictionary template...')
+    json_keys = {"subject": set(), "lesion": set()}
+    logger.info("Creating header dictionary template...")
     for folder in tqdm(folders, desc="Collecting JSON keys"):
-        logger.info('\n---------------------------------------')
-        logger.info(f'current folder path: {folder}')
+        logger.info("\n---------------------------------------")
+        logger.info(f"current folder path: {folder}")
         json_info = get_json_info(folder)
         for main_key in json_info.keys():
-            if 'subject' in json_info[main_key]['name'].lower():
-                json_keys['subject'].update(key for key in json_info[main_key]['values'].keys())
-            if ('lesion' in json_info[main_key]['name'].lower()) \
-                and ('lesion' in list(json_info[main_key]['values'].keys())):
-                json_keys['lesion'].update(key for key in json_info[main_key]['values'].keys())
-        template_keys = ['record_id']                                       + \
-            ['subject_' + key for key in list(json_keys['subject'])] + \
-            ['L1_' + key for key in list(json_keys['lesion'])]       + \
-            ['L2_' + key for key in list(json_keys['lesion'])]       + \
-            ['L3_' + key for key in list(json_keys['lesion'])]
+            if "subject" in json_info[main_key]["name"].lower():
+                json_keys["subject"].update(key for key in json_info[main_key]["values"].keys())
+            if ("lesion" in json_info[main_key]["name"].lower()) and ("lesion" in list(json_info[main_key]["values"].keys())):
+                json_keys["lesion"].update(key for key in json_info[main_key]["values"].keys())
+        template_keys = (
+            ["record_id"]
+            + ["subject_" + key for key in list(json_keys["subject"])]
+            + ["L1_" + key for key in list(json_keys["lesion"])]
+            + ["L2_" + key for key in list(json_keys["lesion"])]
+            + ["L3_" + key for key in list(json_keys["lesion"])]
+        )
     return {key: [] for key in template_keys}
 
 
 def fill_table(template_dict: dict, folders: list) -> pd.DataFrame:
-    logger.info('Filling the table with data...')
+    logger.info("Filling the table with data...")
     all_keys = list(template_dict.keys())
-    all_keys.remove('record_id')
+    all_keys.remove("record_id")
     for folder in tqdm(folders, desc="Filling table"):
-        logger.info('\n---------------------------------------')
-        logger.info(f'current folder path: {folder}')
+        logger.info("\n---------------------------------------")
+        logger.info(f"current folder path: {folder}")
         json_info = get_json_info(folder)
         row = {key: None for key in all_keys}
-        row['record_id'] = folder
+        row["record_id"] = folder
         for main_key in json_info.keys():
-            if 'subject' in json_info[main_key]['name'].lower():
-                for key in json_info[main_key]['values'].keys():
-                    row['subject_' + key] = json_info[main_key]['values'][key]
-            if ('lesion' in json_info[main_key]['name'].lower()) \
-                and ('lesion' in list(json_info[main_key]['values'].keys())):
-                lesion_label = json_info[main_key]['values']['lesion']
-                for key in json_info[main_key]['values'].keys():
+            if "subject" in json_info[main_key]["name"].lower():
+                for key in json_info[main_key]["values"].keys():
+                    row["subject_" + key] = json_info[main_key]["values"][key]
+            if ("lesion" in json_info[main_key]["name"].lower()) and ("lesion" in list(json_info[main_key]["values"].keys())):
+                lesion_label = json_info[main_key]["values"]["lesion"]
+                for key in json_info[main_key]["values"].keys():
                     template_key = f"{lesion_label}_{key}"
                     if template_key in row:
-                        if type(json_info[main_key]['values'][key]) is list \
-                        and len(json_info[main_key]['values'][key]) == 1:
-                            row[template_key] = json_info[main_key]['values'][key][0]
+                        if type(json_info[main_key]["values"][key]) is list and len(json_info[main_key]["values"][key]) == 1:
+                            row[template_key] = json_info[main_key]["values"][key][0]
                         else:
-                            row[template_key] = json_info[main_key]['values'][key]
+                            row[template_key] = json_info[main_key]["values"][key]
         for key in template_dict:
             template_dict[key].append(row.get(key, None))
     template_dict = additional_columns(template_dict)
@@ -110,18 +116,13 @@ def fill_table(template_dict: dict, folders: list) -> pd.DataFrame:
 
 
 def additional_columns(template_dict: dict) -> dict:
-    lesion_cols = ['L1_lesion', 'L2_lesion', 'L3_lesion']
+    lesion_cols = ["L1_lesion", "L2_lesion", "L3_lesion"]
     lesion_counts = []
-    for i in range(len(template_dict['record_id'])):
-        count = sum(
-            bool(template_dict.get(col, [None])[i])
-            for col in lesion_cols
-        )
+    for i in range(len(template_dict["record_id"])):
+        count = sum(bool(template_dict.get(col, [None])[i]) for col in lesion_cols)
         lesion_counts.append(count)
     template_dict = {k: v for k, v in template_dict.items()}
-    template_dict = dict(list(template_dict.items())[:1] +
-                        [('lesion_count', lesion_counts)] +
-                        list(template_dict.items())[1:])
+    template_dict = dict(list(template_dict.items())[:1] + [("lesion_count", lesion_counts)] + list(template_dict.items())[1:])
     return template_dict
 
 
@@ -131,8 +132,8 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
 
     for v in views:
         for lat in laterality:
-            df[f'dicom_path_{v}_{lat}'] = None
-            df[f'annotation_path_{v}_{lat}'] = None
+            df[f"dicom_path_{v}_{lat}"] = None
+            df[f"annotation_path_{v}_{lat}"] = None
 
     dicom_files = glob.glob(os.path.join(dicom_dir, "**", "resources", "DICOM", "files", "*.dcm"), recursive=True)
 
@@ -163,7 +164,7 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
             resolution = rows * cols
 
             record_id = None
-            for rid in df['record_id']:
+            for rid in df["record_id"]:
                 if rid in dcm_path:
                     record_id = rid
                     break
@@ -173,11 +174,13 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
         except Exception as e:
             print(f"Error reading {dcm_path}: {e}")
 
-    seg_files = glob.glob(os.path.join(dicom_dir, "**", "resources", "annotations", "files", "**", "segmentation_*.nii.gz"), recursive=True)
+    seg_files = glob.glob(
+        os.path.join(dicom_dir, "**", "resources", "annotations", "files", "**", "segmentation_*.nii.gz"), recursive=True
+    )
     seg_info = {os.path.basename(s).replace("segmentation_", "").replace(".nii.gz", ""): s for s in seg_files}
 
     for idx, row in df.iterrows():
-        record_id = row['record_id']
+        record_id = row["record_id"]
         if record_id not in patient_dicoms:
             continue
 
@@ -191,29 +194,32 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
         # find a group with all 4 views
         selected_group = None
         for res, group in sorted(resolution_groups.items(), key=lambda x: -x[0]):  # highest resolution first
-            views_present = {(v, l) for _, v, l in group}
-            if all((v, l) in views_present for v in views for l in laterality):
+            views_present = {(view, lat) for _, view, lat in group}
+            if all((view, lat) in views_present for view in views for lat in laterality):
                 selected_group = group
                 break
 
         if selected_group:
             for dcm_path, view, lat in selected_group:
                 abs_dcm_path = os.path.abspath(dcm_path)
-                df.at[idx, f'dicom_path_{view}_{lat}'] = abs_dcm_path
+                df.at[idx, f"dicom_path_{view}_{lat}"] = abs_dcm_path
                 dicom_name = os.path.basename(dcm_path).replace(".dcm", "")
                 ann_path = seg_info.get(dicom_name, None)
                 if ann_path:
                     abs_ann_path = os.path.abspath(ann_path)
-                    df.at[idx, f'annotation_path_{view}_{lat}'] = abs_ann_path
+                    df.at[idx, f"annotation_path_{view}_{lat}"] = abs_ann_path
     return df
+
 
 def drop_ambiguous_rows(df):
     initial_count = len(df)
-    #get patientclass 2 with annotation_path not null
-    mask = ((df['patientclass'] == 2) & (
-        df[['annotation_path_CC_L', 'annotation_path_CC_R', 'annotation_path_MLO_L', 'annotation_path_MLO_R']]
-        .notnull().sum(axis=1) > 1
-    ))
+    # get patientclass 2 with annotation_path not null
+    mask = (df["patientclass"] == 2) & (
+        df[["annotation_path_CC_L", "annotation_path_CC_R", "annotation_path_MLO_L", "annotation_path_MLO_R"]]
+        .notnull()
+        .sum(axis=1)
+        > 1
+    )
 
     dropped = df[mask].copy()
     kept = df[~mask].copy()
@@ -236,12 +242,13 @@ def drop_na(df, subset_cols: List[str]):
 
 def filter_both_views_present_or_absent(df):
     # Check if any CC/MLO annotations are present
-    cc_present = df[['annotation_path_CC_L', 'annotation_path_CC_R']].notnull().any(axis=1)
-    mlo_present = df[['annotation_path_MLO_L', 'annotation_path_MLO_R']].notnull().any(axis=1)
+    cc_present = df[["annotation_path_CC_L", "annotation_path_CC_R"]].notnull().any(axis=1)
+    mlo_present = df[["annotation_path_MLO_L", "annotation_path_MLO_R"]].notnull().any(axis=1)
 
     # Check that all four dicom paths are present
-    all_dicoms_present = df[['dicom_path_CC_L', 'dicom_path_CC_R', 
-                             'dicom_path_MLO_L', 'dicom_path_MLO_R']].notnull().all(axis=1)
+    all_dicoms_present = (
+        df[["dicom_path_CC_L", "dicom_path_CC_R", "dicom_path_MLO_L", "dicom_path_MLO_R"]].notnull().all(axis=1)
+    )
 
     # Keep rows where:
     # 1. Both CC and MLO are present, OR
@@ -255,48 +262,43 @@ def filter_both_views_present_or_absent(df):
     print(f"Number of cases kept (both views present or both absent with all dicoms): {len(kept)}")
     return kept, dropped
 
+
 def drop_class0_no_annotations(df):
 
-    annotation_cols = [
-        'annotation_path_MLO_L',
-        'annotation_path_MLO_R',
-        'annotation_path_CC_L',
-        'annotation_path_CC_R'
-    ]
-    if 'annotation_count' not in df.columns:
-        df['annotation_count'] = df[annotation_cols].notnull().sum(axis=1)
-    
-    dropped = df[(df['patientclass'] == 0) & (df['annotation_count'] == 0)]
+    annotation_cols = ["annotation_path_MLO_L", "annotation_path_MLO_R", "annotation_path_CC_L", "annotation_path_CC_R"]
+    if "annotation_count" not in df.columns:
+        df["annotation_count"] = df[annotation_cols].notnull().sum(axis=1)
+
+    dropped = df[(df["patientclass"] == 0) & (df["annotation_count"] == 0)]
     kept = df.drop(dropped.index).copy()
     print(f"\nRemoved {len(dropped)} rows. New size: {len(kept)}")
 
     return kept, dropped
 
+
 def make_long_format(data, id_vars):
     data_anno = pd.melt(
-        data, 
-        id_vars=id_vars, 
-        value_vars=['annotation_path_CC_L', 'annotation_path_MLO_L', 'annotation_path_CC_R', 'annotation_path_MLO_R'],
-        var_name='view', 
-        value_name='annotation_path'
+        data,
+        id_vars=id_vars,
+        value_vars=["annotation_path_CC_L", "annotation_path_MLO_L", "annotation_path_CC_R", "annotation_path_MLO_R"],
+        var_name="view",
+        value_name="annotation_path",
     )
 
     data_dicom = pd.melt(
-        data, 
-        id_vars=id_vars, 
-        value_vars=['dicom_path_CC_L', 'dicom_path_MLO_L', 'dicom_path_CC_R', 'dicom_path_MLO_R'],
-        var_name='view_dicom', 
-        value_name='dicom_path'
+        data,
+        id_vars=id_vars,
+        value_vars=["dicom_path_CC_L", "dicom_path_MLO_L", "dicom_path_CC_R", "dicom_path_MLO_R"],
+        var_name="view_dicom",
+        value_name="dicom_path",
     )
 
-    data_anno['view'] = data_anno['view'].str.replace('annotation_path_', '')
-    data_dicom['view_dicom'] = data_dicom['view_dicom'].str.replace('dicom_path_', '')
+    data_anno["view"] = data_anno["view"].str.replace("annotation_path_", "")
+    data_dicom["view_dicom"] = data_dicom["view_dicom"].str.replace("dicom_path_", "")
 
-    data_long = pd.merge(
-        data_anno, data_dicom,
-        left_on= id_vars + ['view'],
-        right_on= id_vars + ['view_dicom']
-    ).drop(columns=['view_dicom'])
+    data_long = pd.merge(data_anno, data_dicom, left_on=id_vars + ["view"], right_on=id_vars + ["view_dicom"]).drop(
+        columns=["view_dicom"]
+    )
 
     data_long.head()
     return data_long

@@ -4,30 +4,24 @@ import pandas as pd
 import torchvision.transforms as T
 import argparse
 from pandas import DataFrame
-import torch, random
+import torch
+import random
 import numpy as np
 from sklearn.model_selection import KFold
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-from MammographyDataset import *
-from monai.losses import (
-    DiceLoss,
-    DiceCELoss,
-    GeneralizedDiceLoss,
-    DiceFocalLoss,
-    GeneralizedDiceFocalLoss
-)
+from MammographyDataset import ImageDataset
+from monai.losses import DiceLoss, DiceCELoss, GeneralizedDiceLoss, DiceFocalLoss, GeneralizedDiceFocalLoss
 
 
 def get_args_parser():
-    default = '/users/project1/pt01190/EUCAIM-PG-GUM/code/config.yml'
-    help = '''path to .yml config file
-    specyfying datasets/training params'''
+    default = "/users/project1/pt01190/EUCAIM-PG-GUM/code/config.yml"
+    help = """path to .yml config file
+    specyfying datasets/training params"""
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str,
-                        default=default,
-                        help=help)
+    parser.add_argument("--config", type=str, default=default, help=help)
     return parser
+
 
 def reset_seed(SEED=42):
     """Reset random seeds for reproducibility."""
@@ -37,11 +31,8 @@ def reset_seed(SEED=42):
     torch.cuda.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
 
-def random_split_df(df: DataFrame,
-                    train_frac: float,
-                    val_frac: float,
-                    cal_frac: float,
-                    seed: int = 42) -> tuple:
+
+def random_split_df(df: DataFrame, train_frac: float, val_frac: float, cal_frac: float, seed: int = 42) -> tuple:
     """
     Split DataFrame into train, val, cal (calibration), and test sets by unique ID.
 
@@ -55,7 +46,7 @@ def random_split_df(df: DataFrame,
     Returns:
         Tuple of DataFrames: (train, val, cal, test)
     """
-    unique_ids = df['record_id'].unique()
+    unique_ids = df["record_id"].unique()
     rng = np.random.RandomState(seed)
     rng.shuffle(unique_ids)
 
@@ -69,18 +60,17 @@ def random_split_df(df: DataFrame,
     n_cal = int(n_remaining * cal_frac)
     n_test = n_remaining - n_val - n_cal
 
-    print(f"Total unique IDs: {n_total}\n"
-          f"Train: {n_train}, Val: {n_val}, Cal: {n_cal}, Test: {n_test}")
+    print(f"Total unique IDs: {n_total}\n" f"Train: {n_train}, Val: {n_val}, Cal: {n_cal}, Test: {n_test}")
 
     train_ids = unique_ids[:n_train]
     val_ids = remaining_ids[:n_val]
-    cal_ids = remaining_ids[n_val:n_val + n_cal]
-    test_ids = remaining_ids[n_val + n_cal:]
+    cal_ids = remaining_ids[n_val : n_val + n_cal]
+    test_ids = remaining_ids[n_val + n_cal :]
 
-    train = df[df['record_id'].isin(train_ids)]
-    val = df[df['record_id'].isin(val_ids)]
-    cal = df[df['record_id'].isin(cal_ids)]
-    test = df[df['record_id'].isin(test_ids)]
+    train = df[df["record_id"].isin(train_ids)]
+    val = df[df["record_id"].isin(val_ids)]
+    cal = df[df["record_id"].isin(cal_ids)]
+    test = df[df["record_id"].isin(test_ids)]
 
     return train, val, cal, test
 
@@ -91,59 +81,46 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+
 def create_dataloaders(
-        train_dataset: Dataset,
-        val_dataset: Dataset,
-        cal_dataset: Dataset,
-        test_dataset: Dataset,
-        config: dict,
-        g: torch.Generator,
-        sampler: WeightedRandomSampler = None
-        ) -> Dict[str, DataLoader]:
-    params = config['training_plan']['parameters']
-    
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    cal_dataset: Dataset,
+    test_dataset: Dataset,
+    config: dict,
+    g: torch.Generator,
+    sampler: WeightedRandomSampler = None,
+) -> Dict[str, DataLoader]:
+    params = config["training_plan"]["parameters"]
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=params['batch_size'],
+        batch_size=params["batch_size"],
         shuffle=True if sampler is None else False,
-        num_workers=params['num_workers'],
+        num_workers=params["num_workers"],
         worker_init_fn=seed_worker,
         generator=g,
-        sampler=sampler
+        sampler=sampler,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=params['batch_size'],
+        batch_size=params["batch_size"],
         shuffle=False,
-        num_workers=params['num_workers'],
+        num_workers=params["num_workers"],
         worker_init_fn=seed_worker,
-        generator= g
+        generator=g,
     )
     test_loader = DataLoader(
-        test_dataset,
-        batch_size=params['batch_size'],
-        shuffle=False,
-        num_workers=0,
-        worker_init_fn=seed_worker,
-        generator=g
+        test_dataset, batch_size=params["batch_size"], shuffle=False, num_workers=0, worker_init_fn=seed_worker, generator=g
     )
 
-    dataloaders: Dict[str, DataLoader] = {
-        'train': train_loader,
-        'val': val_loader,
-        'test': test_loader
-    }
+    dataloaders: Dict[str, DataLoader] = {"train": train_loader, "val": val_loader, "test": test_loader}
 
     if cal_dataset is not None:
         cal_loader = DataLoader(
-            cal_dataset,
-            batch_size=params['batch_size'],
-            shuffle=False,
-            num_workers=0,
-            worker_init_fn=seed_worker,
-            generator=g
+            cal_dataset, batch_size=params["batch_size"], shuffle=False, num_workers=0, worker_init_fn=seed_worker, generator=g
         )
-        dataloaders['cal'] = cal_loader
+        dataloaders["cal"] = cal_loader
 
     return dataloaders
 
@@ -159,21 +136,18 @@ def get_fold_dataloaders(config, fold_idx):
     Returns:
         dict: A dictionary containing 'train', 'val', 'cal', and 'test' DataLoaders.
     """
-    df = pd.read_pickle(config['data']['metadata_path'])
+    df = pd.read_pickle(config["data"]["metadata_path"])
 
     #######################
     # df = df[df['patientclass'].isin([0])]  # keep only malignant patients
     #######################
 
-    seed = config['seed']
-    k_folds = config.get('data', {}).get('cv_folds', 5)
-    train_frac = config.get('data', {}).get('fraction_train', 0.8)
-    val_frac = config.get('data', {}).get('fraction_val', 0.1)
-    cal_frac = config.get('data', {}).get('fraction_cal', 0.1)
+    seed = config["seed"]
+    k_folds = config.get("data", {}).get("cv_folds", 5)
+    train_frac = config.get("data", {}).get("fraction_train", 0.8)
+    cal_frac = config.get("data", {}).get("fraction_cal", 0.1)
 
-    train_val_df, _, cal_df, test_df = random_split_df(
-        df, train_frac, 0, cal_frac, seed=seed
-    )
+    train_val_df, _, cal_df, test_df = random_split_df(df, train_frac, 0, cal_frac, seed=seed)
 
     kf = KFold(n_splits=k_folds, shuffle=True, random_state=seed)
     indices = list(range(len(train_val_df)))
@@ -197,10 +171,7 @@ def get_fold_dataloaders(config, fold_idx):
         train_val_df.iloc[train_indices],
         transform=train_transforms,
     )
-    val_dataset = ImageDataset(
-        train_val_df.iloc[val_indices],
-        transform=val_test_transforms
-    )
+    val_dataset = ImageDataset(train_val_df.iloc[val_indices], transform=val_test_transforms)
     cal_dataset = ImageDataset(
         cal_df,
         transform=val_test_transforms,
@@ -209,7 +180,6 @@ def get_fold_dataloaders(config, fold_idx):
         test_df,
         transform=val_test_transforms,
     )
-
 
     print("Class counts per set:")
     print(f"  Train set: {Counter(train_dataset.dataframe.classname)}")
@@ -226,7 +196,7 @@ def get_fold_dataloaders(config, fold_idx):
         test_dataset=test_dataset,
         cal_dataset=cal_dataset,
         config=config,
-        g=g
+        g=g,
     )
 
 
@@ -237,23 +207,27 @@ def get_fold_number(model_name: str) -> int:
         return int(match.group(1))
     else:
         raise ValueError(f"No fold number found in '{model_name}'")
-    
+
 
 def get_loss_function(loss_fn_name: str, device: torch.device):
 
-    pos_weight = torch.tensor([1.0, 1.0])  # default equal weights
-    if loss_fn_name == 'dice':
+    # pos_weight = torch.tensor([1.0, 1.0])  # default equal weights
+    if loss_fn_name == "dice":
         criterion = DiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
-    elif loss_fn_name == 'dice_ce':
-        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean", lambda_ce=0.1 )#, weight=pos_weight.to(device))
-    elif loss_fn_name == 'gdl':
+    elif loss_fn_name == "dice_ce":
+        criterion = DiceCELoss(
+            to_onehot_y=False, sigmoid=True, reduction="mean", lambda_ce=0.1
+        )  # , weight=pos_weight.to(device))
+    elif loss_fn_name == "gdl":
         criterion = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
-    elif loss_fn_name == 'dice_focal':
-        criterion = DiceFocalLoss(to_onehot_y=False, sigmoid=True, reduction="mean",
-                                  lambda_dice=1.0, lambda_focal=1.0, gamma=4.0)
-    elif loss_fn_name == 'gdl_focal':
-        criterion = GeneralizedDiceFocalLoss(to_onehot_y=False, sigmoid=True, reduction="mean",
-                                            lambda_gdl=1.0, lambda_focal=1.0, gamma=4.0)
+    elif loss_fn_name == "dice_focal":
+        criterion = DiceFocalLoss(
+            to_onehot_y=False, sigmoid=True, reduction="mean", lambda_dice=1.0, lambda_focal=1.0, gamma=4.0
+        )
+    elif loss_fn_name == "gdl_focal":
+        criterion = GeneralizedDiceFocalLoss(
+            to_onehot_y=False, sigmoid=True, reduction="mean", lambda_gdl=1.0, lambda_focal=1.0, gamma=4.0
+        )
     else:
         raise ValueError(f"Unsupported loss function: {loss_fn_name}")
 
