@@ -9,8 +9,8 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import pickle
-from dicom_utils import get_pixels_no_voi
-from file_manipulation import make_long_format
+from .dicom_utils import get_pixels_no_voi
+from .file_manipulation import make_long_format
 
 
 def crop_to_breast(img, annot, threshold=0.05):

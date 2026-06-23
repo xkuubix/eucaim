@@ -1,12 +1,12 @@
 # %%
 import os
-from models import PatchUNet
 import utils as utils
 import yaml
-from wandb_utils import fetch_wandb_runs_dataframe
 import matplotlib.pyplot as plt
 import torch
-from net_utils import _dice_from_logits_map
+from .models import PatchUNet
+from .wandb_utils import fetch_wandb_runs_dataframe
+from .net_utils import _dice_from_logits_map
 
 PATH_ = "/users/project1/pt01190/EUCAIM-PG-GUM/code"
 if os.getcwd() != PATH_:

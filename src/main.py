@@ -2,7 +2,7 @@
 import os
 import sys
 import pandas as pd
-from file_manipulation import (
+from .file_manipulation import (
     make_table,
     add_dicom_and_annotation_paths,
     drop_na,
