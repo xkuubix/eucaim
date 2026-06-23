@@ -145,6 +145,7 @@ def add_dicom_and_annotation_paths(df, dicom_dir):
             continue
         try:
             dcm = pydicom.dcmread(dcm_path, stop_before_pixels=True)
+            # TODO, keep MONOCHROME1 with proper handling
             if dcm.PhotometricInterpretation != "MONOCHROME2":
                 # e.g. S0088
                 continue

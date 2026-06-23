@@ -44,7 +44,7 @@ def plot_dicoms_from_folder(folder_path, max_images=6):
     return ds
 
 def main():
-    path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S3671/"
+    path = "/users/project1/pt01190/EUCAIM-PG-GUM/UC6/ECI_GUM_S3737/"
     plot_dicoms_from_folder(path)
 
 if __name__ == "__main__":

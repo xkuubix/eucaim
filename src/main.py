@@ -1,7 +1,7 @@
 #%%
 import os
 import sys
-sys.path.append('./code')
+sys.path.append('./code/src')
 import pandas as pd
 from file_manipulation import *
 from rts2nii import rtstruct2nii

@@ -160,6 +160,11 @@ def get_fold_dataloaders(config, fold_idx):
         dict: A dictionary containing 'train', 'val', 'cal', and 'test' DataLoaders.
     """
     df = pd.read_pickle(config['data']['metadata_path'])
+
+    #######################
+    # df = df[df['patientclass'].isin([0])]  # keep only malignant patients
+    #######################
+
     seed = config['seed']
     k_folds = config.get('data', {}).get('cv_folds', 5)
     train_frac = config.get('data', {}).get('fraction_train', 0.8)
@@ -236,11 +241,11 @@ def get_fold_number(model_name: str) -> int:
 
 def get_loss_function(loss_fn_name: str, device: torch.device):
 
-
+    pos_weight = torch.tensor([1.0, 1.0])  # default equal weights
     if loss_fn_name == 'dice':
         criterion = DiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
     elif loss_fn_name == 'dice_ce':
-        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean")#, weight=pos_weight.to(device))
+        criterion = DiceCELoss(to_onehot_y=False, sigmoid=True, reduction="mean", lambda_ce=0.1 )#, weight=pos_weight.to(device))
     elif loss_fn_name == 'gdl':
         criterion = GeneralizedDiceLoss(to_onehot_y=False, sigmoid=True, reduction="mean")
     elif loss_fn_name == 'dice_focal':

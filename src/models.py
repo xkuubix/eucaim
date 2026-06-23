@@ -60,7 +60,7 @@ class PatchUNet(UNet):
             self.patcher.overlap = self._overla_train
             print(f"Training mode: bag_size set to {self.patcher.bag_size}, overlap set to {self.patcher.overlap}")
         else:
-            self.patcher.bag_size = -1
+            self.patcher.bag_size = 6000
             self.patcher.overlap = self._overlap_eval
             print(f"Evaluation mode: bag_size set to {self.patcher.bag_size}, overlap set to {self.patcher.overlap}")
         return self
@@ -200,7 +200,7 @@ class PatchUNet(UNet):
         # Undersampling mask for seg loss (only used during training with mask)
         seg_loss_mask = None
         if mask_patches is not None:
-            seg_loss_mask = self.get_seg_loss_mask(mask_patches, attn_weights=attn_weights.detach(), bg_threshold=bg_threshold, bg_ratio=bg_ratio)
+            seg_loss_mask = self.get_seg_loss_mask(mask_patches, attn_weights=None, bg_threshold=bg_threshold, bg_ratio=bg_ratio)
 
         return pred_patches, mask_patches, instances_ids, cls_logits, attn_weights, seg_loss_mask
 
@@ -294,3 +294,13 @@ if __name__ == "__main__":
                  f"logits={cls_logits.detach().cpu().numpy().round(2)}")
     plt.tight_layout()
     plt.show()
+
+    preds_patched, masks_patched, instances_ids, cls_logits, att_weights, seg_mask = model(sample_input)
+    att_reconstructed, _ = model.patcher.reconstruct_image_from_patches(att_weights, instances_ids, image_shape=sample_input.shape) if att_weights is not None else (None, None)
+    img_patched, att_patches, instances_ids, _  = model.patch_image_and_mask(sample_input, att_reconstructed)
+
+    print(img_patched.shape, att_patches.shape, preds_patched.shape)
+
+
+# %%
+# %%

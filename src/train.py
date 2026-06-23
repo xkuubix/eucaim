@@ -1,14 +1,14 @@
 # %%
+import gc
 import os, sys
 sys.dont_write_bytecode = True
 PATH_ = '/users/project1/pt01190/EUCAIM-PG-GUM/code'
 if os.getcwd() != PATH_:
     os.chdir(PATH_)
-from wandb_utils import fetch_wandb_runs_dataframe
-from models import PatchUNet
-import torch, utils, yaml, wandb
+from .wandb_utils import fetch_wandb_runs_dataframe
+from .models import PatchUNet
+import torch, utils as utils, yaml, wandb
 from net_utils import train, test
-import wandb
 
 
 parser = utils.get_args_parser()
@@ -22,14 +22,16 @@ device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 if config["use_wandb"]:
     os.environ["WANDB_PROJECT"] = "EUC"
     api = wandb.Api()
-    entity, project = "jb_pg", "eucaim"
+    entity, project = "jb_pg", "eucaim_cls"
     runs = api.runs(entity + "/" + project)
     run = wandb.init(entity=entity, project=project, config=config)
-    run.tags = run.tags + ("SEG",)
-    run.tags = run.tags + ("CLEAR-AI",)
     run.tags = run.tags + ("dice dla +",)
     run.tags = run.tags + ("undersampling",)
-    run.tags = run.tags + ("positive patients",)
+    run.tags = run.tags + ("all patients",)
+    run.tags = run.tags + ("grad acc 8",)
+    run.tags = run.tags + ("val po loss",)
+    # run.tags = run.tags + ("patch norm",)
+    # run.tags = run.tags + ("positive patients",)
 else:
     run = None
 utils.reset_seed(config.get('seed', 42))
@@ -58,7 +60,7 @@ loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
-if config.get('resume_from_run') != '-':
+if config.get('resume_from_run'):
     run_id = config['resume_from_run']
 
     df = fetch_wandb_runs_dataframe("jb_pg/eucaim_cls")
@@ -112,14 +114,26 @@ history = train(
 )
 
 print('Training finished. History keys:', list(history.keys()))
+
 if history.get('best_model_path'):
     print('Best model saved to:', history['best_model_path'])
+    model_path = history['best_model_path']
+    ckpt = torch.load(
+            model_path,
+            map_location='cpu',
+            weights_only=False
+            )
+    print(f"Loading model from {model_path} [{ckpt['epoch']}]")
+    model = ckpt['model'].to(device)
 
-# Run final test
 del optimizer
+model.eval()
 torch.cuda.empty_cache()
 torch.cuda.synchronize()
-test(model, dataloaders['test'], criterion, device, wandb_run=run)
+gc.collect()
+
+with torch.no_grad():
+    test(model, dataloaders['test'], criterion, device, wandb_run=run)
 
 if run:
     run.finish()

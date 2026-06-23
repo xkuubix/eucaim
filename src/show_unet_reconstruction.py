@@ -5,7 +5,7 @@ if os.getcwd() != PATH_:
     os.chdir(PATH_)
 from models import PatchUNet
 import torch
-import utils
+import utils as utils
 import yaml
 from wandb_utils import fetch_wandb_runs_dataframe
 import matplotlib.pyplot as plt
@@ -21,12 +21,15 @@ with open(args.config) as file:
 selected_device = config['device']
 device = torch.device(selected_device if torch.cuda.is_available() else "cpu")
 
-run_id = 'EUC-48'
+# run_id = 'EUC-48'
+# publ0icb
+# run_id = 'snowy-frost-160'
+run_id = 'grateful-pine-196'
 if run_id:
     df = fetch_wandb_runs_dataframe("jb_pg/eucaim_cls")
     model_path = df[df['name']==run_id]['summary/best/model_path'].item()
     print(f"Loading model from wandb run {run_id} at {model_path}")
-
+# %%
 config['activation'] = df[df['name']==run_id]['config/activation'].item()
 config['data'] = df[df['name']==run_id]['config/data'].item()
 print("Reloaded config from wandb")
@@ -54,8 +57,6 @@ unet = PatchUNet(
     bias=False, # using norm
 ).to(device)
 
-# model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1036_best.pth" # 256
-# model_path = "/users/scratch1/jbuler/eucaim/models/MAM-1120_best.pth" # 512
 if model_path:
     ckpt = torch.load(
         model_path,
@@ -63,7 +64,7 @@ if model_path:
         weights_only=False
         )
     print(f"Loading model from {model_path} [{ckpt['epoch']}]")
-    unet =ckpt['model']
+    unet = ckpt['model']
 loss_fn_name = config['training_plan'].get('loss_function', 'dice')
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
@@ -76,9 +77,13 @@ with torch.no_grad():
     for batch in dataloaders['test']:
         images = batch['image'].to(device)
         masks = batch['annotation'].to(device)
-        preds_patched, masks_patched, instances_ids = unet(images, masks)
+        labels = batch['patientclass']
+        if labels <= 0.5:
+            continue
+        preds_patched, masks_patched, instances_ids, cls_logits, att_weights, seg_mask = unet(images, masks)
         pred, patch_count = unet.patcher.reconstruct_image_from_patches(preds_patched, instances_ids, image_shape=images.shape)  # (c, h, w)
         mask, _ = unet.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape) if masks is not None else (None, None)
+        att_weights_reconstructed, _ = unet.patcher.reconstruct_image_from_patches(att_weights, instances_ids, image_shape=images.shape) if att_weights is not None else (None, None)
 
         dice = _dice_from_logits_map(pred, mask, patch_count=patch_count) if mask is not None else None
         all_dice_scores.append(dice)

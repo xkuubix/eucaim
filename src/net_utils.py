@@ -284,7 +284,7 @@ def test(
             if masks is not None:
                 masks = masks.to(device)
 
-            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks)
+            preds_patched, masks_patched, instances_ids, cls_logits, _, _ = model(images, masks)
             all_preds.append(cls_logits.cpu())
             all_labels.append(labels.cpu())
             if labels == 1:
@@ -303,8 +303,11 @@ def test(
                 seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
                 n_neg += 1
             cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
-            running["seg_loss"] += float(seg_loss.item())
+
+            running["seg_loss"] += float(seg_loss) if isinstance(seg_loss, float) else float(seg_loss.item())
             running["cls_loss"] += float(cls_loss.item())
+            del images, masks, preds_patched, masks_patched
+            torch.cuda.empty_cache()
 
 
     cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
@@ -346,7 +349,7 @@ def train(
     if 'val' in dataloaders:
         history.update({"val_seg_loss": [], "val_cls_loss": [], "val_dice": [], "val_auprc": [], "val_detection_rate": []})
 
-    best_val = float('-inf')
+    best_val = float('inf')
     best_epoch = -1
     epochs_since_improve = 0
     best_model_path: Optional[str] = None
@@ -393,9 +396,9 @@ def train(
             did_validate = True
 
             if early_stopping_patience is not None:
-                current_val = val_stats['dice']
-                # improvement if increase greater than min_delta
-                if current_val > best_val + min_delta:
+                current_val = val_stats['seg_loss']  # or use val_stats['dice'] with reversed logic
+                # improvement if decrease less than min_delta
+                if current_val < best_val - min_delta:
                     best_val = current_val
                     best_epoch = epoch
                     epochs_since_improve = 0

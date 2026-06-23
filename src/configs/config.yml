@@ -1,25 +1,28 @@
-neptune: True
+use_wandb: True
 seed: 42
 device: 'cuda'
 
 model_path: '/users/scratch1/jbuler/eucaim/models'
+activation: 'prelu' # 'elu' 'relu' 'leakyrelu' 'prelu' 'relu6' 'selu' 'celu' 'gelu'
 
-resume_from_run: False # 'apricot-valley-174' # None or wandb run id to resume from
+
+resume_from_run: 'dazzling-jazz-216' # 'apricot-valley-174' # None or wandb run id to resume from
 data:
   num_classes: 2
   cv_folds: 5
-  fraction_train: 0.70
-  fraction_cal: 0.0
+  fraction_train: 0.75
+  fraction_cal: 0.75
   
   weighted_sampling: False
 
   root_path: '/users/project1/pt01190/EUCAIM-PG-GUM/code'
   metadata_path: '/users/project1/pt01190/EUCAIM-PG-GUM/code/dataset.pkl'
   
-  patch_size: 256
-  overlap: .75
-  empty_threshold: 0.75
-  bag_size: -1
+  patch_size: 224
+  overlap_train: .5
+  overlap_eval: .875
+  empty_threshold: 0.9
+  bag_size: 2000 # train, val has -1 by default
 
 
 training_plan:
@@ -27,13 +30,14 @@ training_plan:
     batch_size: 1
     num_workers: 8
     lr: 0.0001
-    wd: 0.0001
+    wd: 0.001
     epochs: 1000
     patience: 20
     validate_every: 1
-    grad_acc_steps: 2
+    grad_acc_steps: 8
 
   optimizer: 'adam'
+  loss_function: 'dice_ce' # dice | dice_ce | gdl | dice_focal | gdl_focal
 
   # scheduler:
   #   name: 'lin'
