@@ -1,6 +1,7 @@
 import os
 from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
+import torch.distributed as dist
 from typing import Dict, Tuple, Optional, List, Any
 from mammography_tool.wandb_utils import _safe_wandb_log
 import time
@@ -176,7 +177,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None)
                     running["dice"] += dice_mean
                     n_pos += 1
         else:
-            seg_loss = torch.tensor(0.0, device=device)
+            seg_loss = (preds_patched * 0).sum()  # has grad_fn, touches model params
 
         # --- classification loss ---
         cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels)
@@ -208,6 +209,8 @@ def validate(
     dataloader: torch.utils.data.DataLoader,
     criterion: torch.nn.Module,
     device: torch.device,
+    is_ddp: bool = False,
+    rank: int = 0,
 ) -> Dict[str, float]:
     """
     Run validation (no grad). Returns average loss and dice.
@@ -217,13 +220,14 @@ def validate(
     n_pos = 0
     all_preds: List[Tuple[object, torch.Tensor]] = []
     all_labels: List[torch.Tensor] = []
+    base_model = _unwrap_model(model)
     with torch.no_grad():
         for batch in dataloader:
             images = batch["image"].to(device)
             masks = batch["annotation"].to(device)
             labels = batch["patientclass"].squeeze(0).to(device)
 
-            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks)
+            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks, bg_threshold=0.01, bg_ratio=2.0)
             all_preds.append(cls_logits.cpu())
             all_labels.append(labels.cpu())
             cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels)
@@ -233,10 +237,10 @@ def validate(
                 masks_cpu = masks_patched.cpu()
                 seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
                 running["seg_loss"] += float(seg_loss.item())
-                pred, patch_count = model.patcher.reconstruct_image_from_patches(
+                pred, patch_count = base_model.patcher.reconstruct_image_from_patches(
                     preds_cpu, instances_ids, image_shape=images.shape
                 )
-                mask_reconstructed, _ = model.patcher.reconstruct_image_from_patches(
+                mask_reconstructed, _ = base_model.patcher.reconstruct_image_from_patches(
                     masks_cpu, instances_ids, image_shape=images.shape
                 )
                 running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, patch_count=patch_count)
@@ -253,6 +257,58 @@ def validate(
 
             del preds_patched, masks_patched, images, masks, cls_logits, attn
             torch.cuda.empty_cache()
+
+    local_payload = {
+        "seg_loss": running["seg_loss"],
+        "cls_loss": running["cls_loss"],
+        "dice": running["dice"],
+        "auprc": running["auprc"],
+        "lesion_detected": running["lesion_detected"],
+        "n_pos": n_pos,
+        "n_batches": len(dataloader),
+        "all_preds": all_preds,
+        "all_labels": all_labels,
+    }
+
+    if is_ddp and dist.is_initialized():
+        gathered_payloads = [None] * dist.get_world_size()
+        dist.all_gather_object(gathered_payloads, local_payload)
+        if rank == 0:
+            all_preds = []
+            all_labels = []
+            total_seg_loss = 0.0
+            total_cls_loss = 0.0
+            total_dice = 0.0
+            total_auprc = 0.0
+            total_lesion_detected = 0.0
+            total_n_pos = 0
+            total_n_batches = 0
+            for payload in gathered_payloads:
+                total_seg_loss += payload["seg_loss"]
+                total_cls_loss += payload["cls_loss"]
+                total_dice += payload["dice"]
+                total_auprc += payload["auprc"]
+                total_lesion_detected += payload["lesion_detected"]
+                total_n_pos += payload["n_pos"]
+                total_n_batches += payload["n_batches"]
+                all_preds.extend(payload["all_preds"])
+                all_labels.extend(payload["all_labels"])
+
+            cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
+            final_stats = {
+                "seg_loss": total_seg_loss / max(1, total_n_pos),
+                "cls_loss": total_cls_loss / max(1, total_n_batches),
+                "dice": total_dice / max(1, total_n_pos),
+                "auprc": total_auprc / max(1, total_n_pos),
+                "lesion_detected": total_lesion_detected / max(1, total_n_pos),
+                "cls_metrics": cls_metrics,
+            }
+        else:
+            final_stats = None
+
+        final_stats_list = [final_stats]
+        dist.broadcast_object_list(final_stats_list, src=0)
+        return final_stats_list[0]
 
     avg_seg_loss = running["seg_loss"] / max(1, n_pos)  # average seg loss only over positive cases
     avg_cls_loss = running["cls_loss"] / max(1, len(dataloader))
