@@ -333,9 +333,19 @@ def test(
     criterion: Optional[torch.nn.Module],
     device: torch.device,
     wandb_run: Optional[Any] = None,
+    rank: int = 0,
+    is_ddp: bool = False,
 ) -> Dict[str, object]:
     """
     Run a test loop. If `criterion` is provided, compute loss as well.
+
+    Args:
+        model: PyTorch model (may be wrapped with DistributedDataParallel)
+        dataloader: Test DataLoader
+        criterion: Loss function
+        device: Device to test on
+        wandb_run: Optional wandb run object (only logs on rank 0)
+        rank: Current process rank (0 is primary)
 
     If `return_predictions` is True, returns a list of (instances_ids, probs) per batch.
     """
@@ -349,7 +359,7 @@ def test(
     n_neg = 0
     all_preds: List[Tuple[object, torch.Tensor]] = []
     all_labels: List[torch.Tensor] = []
-    all_preds: List[Tuple[object, torch.Tensor]] = []
+    base_model = _unwrap_model(model)
 
     with torch.no_grad():
         for batch in dataloader:
@@ -364,7 +374,7 @@ def test(
             all_labels.append(labels.cpu())
             if labels == 1:
                 n_pos += 1
-                pred, patch_count = model.patcher.reconstruct_image_from_patches(
+                pred, patch_count = base_model.patcher.reconstruct_image_from_patches(
                     preds_patched, instances_ids, image_shape=images.shape
                 )  # (c, h, w)
                 mask_reconstructed, _ = (
@@ -390,19 +400,87 @@ def test(
             del images, masks, preds_patched, masks_patched
             torch.cuda.empty_cache()
 
-    cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
-    if wandb_run is not None:
-        wandb_run.summary["test/seg/loss"] = running["seg_loss"] / max(1, n_pos)
-        wandb_run.summary["test/cls/loss"] = running["cls_loss"] / max(1, len(dataloader.dataset))
-        wandb_run.summary["test/seg/dice"] = running["dice"] / max(1, n_pos)
-        wandb_run.summary["test/seg/auprc"] = running["auprc"] / max(1, n_pos)
-        wandb_run.summary["test/cls/acc"] = cls_metrics["acc"]
-        wandb_run.summary["test/cls/auroc"] = cls_metrics["auroc"]
-        wandb_run.summary["test/cls/auprc"] = cls_metrics["auprc"]
-        wandb_run.summary["test/seg/px_fpr"] = running["px_fpr"] / max(1, n_pos)
-        wandb_run.summary["test/seg/px_fnr"] = running["px_fnr"] / max(1, n_pos)
-        wandb_run.summary["test/seg/px_tpr"] = running["px_tpr"] / max(1, n_pos)
-        wandb_run.summary["test/seg/px_tnr"] = running["px_tnr"] / max(1, n_neg)
+    local_payload = {
+        "seg_loss": running["seg_loss"],
+        "cls_loss": running["cls_loss"],
+        "dice": running["dice"],
+        "auprc": running["auprc"],
+        "px_fpr": running["px_fpr"],
+        "px_fnr": running["px_fnr"],
+        "px_tpr": running["px_tpr"],
+        "px_tnr": running["px_tnr"],
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "n_batches": len(dataloader),
+        "all_preds": all_preds,
+        "all_labels": all_labels,
+    }
+
+    if is_ddp and dist.is_initialized():
+        gathered_payloads = [None] * dist.get_world_size()
+        dist.all_gather_object(gathered_payloads, local_payload)
+        if rank == 0:
+            all_preds = []
+            all_labels = []
+            totals = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0, "px_fpr": 0.0, "px_fnr": 0.0, "px_tpr": 0.0, "px_tnr": 0.0}
+            total_n_pos = 0
+            total_n_neg = 0
+            total_n_batches = 0
+            for payload in gathered_payloads:
+                for key in totals:
+                    totals[key] += payload[key]
+                total_n_pos += payload["n_pos"]
+                total_n_neg += payload["n_neg"]
+                total_n_batches += payload["n_batches"]
+                all_preds.extend(payload["all_preds"])
+                all_labels.extend(payload["all_labels"])
+
+            cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
+            final_stats = {
+                "seg_loss": totals["seg_loss"] / max(1, total_n_pos),
+                "cls_loss": totals["cls_loss"] / max(1, total_n_batches),
+                "dice": totals["dice"] / max(1, total_n_pos),
+                "auprc": totals["auprc"] / max(1, total_n_pos),
+                "px_fpr": totals["px_fpr"] / max(1, total_n_pos),
+                "px_fnr": totals["px_fnr"] / max(1, total_n_pos),
+                "px_tpr": totals["px_tpr"] / max(1, total_n_pos),
+                "px_tnr": totals["px_tnr"] / max(1, total_n_neg),
+                "cls_metrics": cls_metrics,
+            }
+        else:
+            final_stats = None
+
+        final_stats_list = [final_stats]
+        dist.broadcast_object_list(final_stats_list, src=0)
+        final_stats = final_stats_list[0]
+    else:
+        cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
+        final_stats = {
+            "seg_loss": running["seg_loss"] / max(1, n_pos),
+            "cls_loss": running["cls_loss"] / max(1, len(dataloader.dataset)),
+            "dice": running["dice"] / max(1, n_pos),
+            "auprc": running["auprc"] / max(1, n_pos),
+            "px_fpr": running["px_fpr"] / max(1, n_pos),
+            "px_fnr": running["px_fnr"] / max(1, n_pos),
+            "px_tpr": running["px_tpr"] / max(1, n_pos),
+            "px_tnr": running["px_tnr"] / max(1, n_neg),
+            "cls_metrics": cls_metrics,
+        }
+
+    if wandb_run is not None and rank == 0:
+        wandb_run.summary["test/seg/loss"] = final_stats["seg_loss"]
+        wandb_run.summary["test/cls/loss"] = final_stats["cls_loss"]
+        wandb_run.summary["test/seg/dice"] = final_stats["dice"]
+        wandb_run.summary["test/seg/auprc"] = final_stats["auprc"]
+        wandb_run.summary["test/cls/acc"] = final_stats["cls_metrics"]["acc"]
+        wandb_run.summary["test/cls/auroc"] = final_stats["cls_metrics"]["auroc"]
+        wandb_run.summary["test/cls/auprc"] = final_stats["cls_metrics"]["auprc"]
+        wandb_run.summary["test/seg/px_fpr"] = final_stats["px_fpr"]
+        wandb_run.summary["test/seg/px_fnr"] = final_stats["px_fnr"]
+        wandb_run.summary["test/seg/px_tpr"] = final_stats["px_tpr"]
+        wandb_run.summary["test/seg/px_tnr"] = final_stats["px_tnr"]
+
+    return final_stats
 
 
 @timeit(unit='min')
