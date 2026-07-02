@@ -149,11 +149,11 @@ def _get_pred_rates_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
     return fpr, fnr, tpr, tnr
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None):
+@timeit(unit='min')
+def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None, grad_acc_steps=1):
     model.train()
     running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0}
     n_pos = 0
-    grad_acc_steps = 8
 
     optimizer.zero_grad()
 
@@ -378,7 +378,7 @@ def test(
                     preds_patched, instances_ids, image_shape=images.shape
                 )  # (c, h, w)
                 mask_reconstructed, _ = (
-                    model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
+                    base_model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
                     if masks is not None
                     else None
                 )
