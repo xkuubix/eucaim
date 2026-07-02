@@ -493,16 +493,38 @@ def train(
     epochs: int = 10,
     scheduler: Optional[object] = None,
     clip_grad: Optional[float] = None,
+    grad_acc_steps: int = 1,
     validate_every: int = 1,
     early_stopping_patience: Optional[int] = None,
     save_path: Optional[str] = None,
     min_delta: float = 1e-8,
     wandb_run: Optional[Any] = None,
+    is_ddp: bool = False,
+    rank: int = 0,
 ) -> Dict[str, object]:
     """
-    High-level training loop.
+    High-level training loop with DDP support.
 
-    Returns history dict with lists for 'train_loss','train_dice','val_loss','val_dice' (when validation available).
+    Args:
+        model: PyTorch model (may be wrapped with DistributedDataParallel)
+        dataloaders: Dictionary of DataLoaders for train/val/cal/test
+        optimizer: PyTorch optimizer
+        criterion: Loss function
+        device: Device to train on
+        epochs: Number of epochs to train
+        scheduler: Optional learning rate scheduler
+        clip_grad: Optional gradient clipping value
+        grad_acc_steps: Gradient accumulation steps
+        validate_every: Validate every N epochs
+        early_stopping_patience: Early stopping patience (if None, disabled)
+        save_path: Path to save best model (only used on rank 0)
+        min_delta: Minimum improvement threshold for early stopping
+        wandb_run: Optional wandb run object (only logs on rank 0)
+        is_ddp: Whether using DistributedDataParallel
+        rank: Current process rank (0 is primary)
+
+    Returns:
+        history dict with lists for 'train_loss','train_dice','val_loss','val_dice' (when validation available).
     """
     history = {"train_seg_loss": [], "train_cls_loss": [], "train_dice": [], "train_auprc": []}
     if "val" in dataloaders:
@@ -518,12 +540,15 @@ def train(
             os.makedirs(save_dir, exist_ok=True)
 
     for epoch in range(epochs):
-        train_stats = train_epoch(model, dataloaders["train"], optimizer, criterion, device, clip_grad)
+        if is_ddp:
+            dataloaders["train"].sampler.set_epoch(epoch)
+
+        train_stats = train_epoch(model, dataloaders["train"], optimizer, criterion, device, clip_grad, grad_acc_steps)
         history["train_seg_loss"].append(train_stats["seg_loss"])
         history["train_cls_loss"].append(train_stats["cls_loss"])
         history["train_dice"].append(train_stats["dice"])
 
-        if wandb_run is not None:
+        if wandb_run is not None and rank == 0:
             _safe_wandb_log(wandb_run, "train/seg/loss", train_stats["seg_loss"], step=epoch)
             _safe_wandb_log(wandb_run, "train/cls/loss", train_stats["cls_loss"], step=epoch)
             _safe_wandb_log(wandb_run, "train/seg/dice", train_stats["dice"], step=epoch)
@@ -536,14 +561,14 @@ def train(
 
         did_validate = False
         if "val" in dataloaders and ((epoch + 1) % validate_every == 0):
-            val_stats = validate(model, dataloaders["val"], criterion, device)
+            val_stats = validate(model, dataloaders["val"], criterion, device, is_ddp=is_ddp, rank=rank)
             history["val_seg_loss"].append(val_stats["seg_loss"])
             history["val_cls_loss"].append(val_stats["cls_loss"])
             history["val_dice"].append(val_stats["dice"])
             history["val_auprc"].append(val_stats["auprc"])
             history["val_detection_rate"].append(val_stats["lesion_detected"])
 
-            if wandb_run is not None:
+            if wandb_run is not None and rank == 0:
                 _safe_wandb_log(wandb_run, "val/seg/loss", val_stats["seg_loss"], step=epoch)
                 _safe_wandb_log(wandb_run, "val/cls/loss", val_stats["cls_loss"], step=epoch)
                 _safe_wandb_log(wandb_run, "val/seg/dice", val_stats["dice"], step=epoch)
@@ -557,22 +582,21 @@ def train(
             if early_stopping_patience is not None:
                 current_val = val_stats["seg_loss"]  # or use val_stats['dice'] with reversed logic
                 # improvement if decrease less than min_delta
+                should_stop = False
                 if current_val < best_val - min_delta:
                     best_val = current_val
                     best_epoch = epoch
                     epochs_since_improve = 0
-                    # save best model
-                    if save_path is not None:
+                    # save best model (only on rank 0)
+                    if save_path is not None and rank == 0:
                         checkpoint = {
                             "epoch": epoch,
-                            "model": model,
-                            "optimizer": optimizer,
-                            # 'lr_sched': lr_sched
+                            "model_state_dict": _unwrap_model(model).state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
                         }
                         torch.save(checkpoint, save_path)
-                        # torch.save(model.state_dict(), save_path)
                         best_model_path = save_path
-                        print(f"Saved best model (val loss {best_val:.6f}) to {save_path}")
+                        print(f"[Rank {rank}] Saved best model (val loss {best_val:.6f}) to {save_path}")
                         if wandb_run is not None:
                             _safe_wandb_log(wandb_run, "best/model_path", save_path, step=epoch)
                             _safe_wandb_log(wandb_run, "best/val_loss", best_val, step=epoch)
@@ -584,32 +608,40 @@ def train(
                             )
                 else:
                     epochs_since_improve += 1
-                    if wandb_run is not None:
+                    if wandb_run is not None and rank == 0:
                         _safe_wandb_log(
                             wandb_run, "early_stopping/patience", early_stopping_patience - epochs_since_improve, step=epoch
                         )
 
                 if epochs_since_improve >= early_stopping_patience:
-                    print(
-                        f"Early stopping triggered at epoch {epoch+1}. No improvement for {epochs_since_improve} validation checks."
-                    )
-                    if wandb_run is not None:
-                        _safe_wandb_log(wandb_run, "early_stopping/stopped_epoch", epoch + 1, step=epoch)
-                        _safe_wandb_log(
-                            wandb_run, "early_stopping/patience", early_stopping_patience - epochs_since_improve, step=epoch
+                    should_stop = True
+                    if rank == 0:
+                        print(
+                            f"Early stopping triggered at epoch {epoch+1}. No improvement for {epochs_since_improve} validation checks."
                         )
+                        if wandb_run is not None:
+                            _safe_wandb_log(wandb_run, "early_stopping/stopped_epoch", epoch + 1, step=epoch)
+                            _safe_wandb_log(
+                                wandb_run, "early_stopping/patience", early_stopping_patience - epochs_since_improve, step=epoch
+                            )
+                if is_ddp and dist.is_initialized():
+                    stop_tensor = torch.tensor([1 if should_stop else 0], device=device)
+                    dist.broadcast(stop_tensor, src=0)
+                    should_stop = bool(stop_tensor.item())
+                if should_stop:
                     break
 
-        print(
-            f"Epoch {epoch+1}/{epochs} | TRAIN SL: {train_stats['seg_loss']:.4f} CL: {train_stats['cls_loss']:.4f} D: {train_stats['dice']:.4f}",
-            end="",
-        )
-        if did_validate:
+        if rank == 0:
             print(
-                f" | VAL SL: {val_stats['seg_loss']:.4f} CL: {val_stats['cls_loss']:.4f} D: {val_stats['dice']:.4f}, Detected: {val_stats['lesion_detected']:.4f}"
+                f"[Rank {rank}] Epoch {epoch+1}/{epochs} | TRAIN SL: {train_stats['seg_loss']:.4f} CL: {train_stats['cls_loss']:.4f} D: {train_stats['dice']:.4f}",
+                end="",
             )
-        else:
-            print("")
+            if did_validate:
+                print(
+                    f" | VAL SL: {val_stats['seg_loss']:.4f} CL: {val_stats['cls_loss']:.4f} D: {val_stats['dice']:.4f}, Detected: {val_stats['lesion_detected']:.4f}"
+                )
+            else:
+                print("")
 
     history_out: Dict[str, object] = history
     history_out["best_epoch"] = best_epoch
