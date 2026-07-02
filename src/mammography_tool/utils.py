@@ -8,7 +8,7 @@ import numpy as np
 from typing import Counter, Dict
 from pandas import DataFrame
 from sklearn.model_selection import KFold
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, DistributedSampler
 from mammography_tool.MammographyDataset import ImageDataset
 from monai.losses import DiceLoss, DiceCELoss, GeneralizedDiceLoss, DiceFocalLoss, GeneralizedDiceFocalLoss
 
@@ -125,13 +125,17 @@ def create_dataloaders(
     return dataloaders
 
 
-def get_fold_dataloaders(config, fold_idx):
+def get_fold_dataloaders_ddp(config: dict, fold_idx: int, rank: int, world_size: int, is_ddp: bool):
     """
     Splits the dataset into training, validation, calibration, and test sets for cross-validation.
+    Uses DistributedSampler for DDP training.
 
     Args:
         config (dict): Configuration dictionary containing data paths and settings.
         fold_idx (int): The fold index to be used for validation.
+        rank (int): Rank of the current process in DDP.
+        world_size (int): Total number of processes in DDP.
+        is_ddp (bool): Whether DDP is enabled.
 
     Returns:
         dict: A dictionary containing 'train', 'val', 'cal', and 'test' DataLoaders.
@@ -164,8 +168,9 @@ def get_fold_dataloaders(config, fold_idx):
     train_transforms = T.Compose([T.ToTensor()])
     val_test_transforms = T.Compose([T.ToTensor()])
 
-    print(f"Fold {fold_idx + 1}:")
-    print(f"Patients No. TRAIN: {len(train_indices)}, VAL: {len(val_indices)}, CAL: {len(cal_df)}, TEST: {len(test_df)}")
+    if rank == 0:
+        print(f"Fold {fold_idx + 1}:")
+        print(f"Patients No. TRAIN: {len(train_indices)}, VAL: {len(val_indices)}, CAL: {len(cal_df)}, TEST: {len(test_df)}")
 
     train_dataset = ImageDataset(
         train_val_df.iloc[train_indices],
@@ -181,23 +186,115 @@ def get_fold_dataloaders(config, fold_idx):
         transform=val_test_transforms,
     )
 
-    print("Class counts per set:")
-    print(f"  Train set: {Counter(train_dataset.dataframe.classname)}")
-    print(f"  Validation set: {Counter(val_dataset.dataframe.classname)}")
-    print(f"  Calibration set: {Counter(cal_dataset.dataframe.classname)}")
-    print(f"  Test set: {Counter(test_dataset.dataframe.classname)}")
+    if rank == 0:
+        print("Class counts per set:")
+        print(f"  Train set: {Counter(train_dataset.dataframe.classname)}")
+        print(f"  Validation set: {Counter(val_dataset.dataframe.classname)}")
+        print(f"  Calibration set: {Counter(cal_dataset.dataframe.classname)}")
+        print(f"  Test set: {Counter(test_dataset.dataframe.classname)}")
 
     g = torch.Generator()
     g.manual_seed(seed)
 
-    return create_dataloaders(
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        test_dataset=test_dataset,
-        cal_dataset=cal_dataset,
-        config=config,
-        g=g,
-    )
+    params = config["training_plan"]["parameters"]
+
+    # Use DistributedSampler for training if DDP is enabled
+    if is_ddp:
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+            seed=seed
+        )
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            seed=seed
+        )
+        test_sampler = DistributedSampler(
+            test_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            seed=seed
+        )
+        cal_sampler = DistributedSampler(
+            cal_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            seed=seed
+        )
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=params["batch_size"],
+            sampler=train_sampler,
+            num_workers=params["num_workers"],
+            worker_init_fn=seed_worker,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=params["batch_size"],
+            sampler=val_sampler,
+            num_workers=params["num_workers"],
+            worker_init_fn=seed_worker,
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=params["batch_size"],
+            sampler=test_sampler,
+            num_workers=0,
+            worker_init_fn=seed_worker,
+        )
+        cal_loader = DataLoader(
+            cal_dataset,
+            batch_size=params["batch_size"],
+            sampler=cal_sampler,
+            num_workers=0,
+            worker_init_fn=seed_worker,
+        )
+    else:
+        # Use regular DataLoaders if DDP is not enabled
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=params["batch_size"],
+            shuffle=True,
+            num_workers=params["num_workers"],
+            worker_init_fn=seed_worker,
+            generator=g,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=params["batch_size"],
+            shuffle=False,
+            num_workers=params["num_workers"],
+            worker_init_fn=seed_worker,
+            generator=g,
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=params["batch_size"],
+            shuffle=False,
+            num_workers=0,
+            worker_init_fn=seed_worker,
+            generator=g,
+        )
+        cal_loader = DataLoader(
+            cal_dataset,
+            batch_size=params["batch_size"],
+            shuffle=False,
+            num_workers=0,
+            worker_init_fn=seed_worker,
+            generator=g,
+        )
+
+    dataloaders: Dict[str, DataLoader] = {"train": train_loader, "val": val_loader, "test": test_loader, "cal": cal_loader}
+
+    return dataloaders
 
 
 def get_fold_number(model_name: str) -> int:
