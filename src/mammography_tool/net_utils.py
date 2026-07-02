@@ -3,6 +3,27 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 from typing import Dict, Tuple, Optional, List, Any
 from mammography_tool.wandb_utils import _safe_wandb_log
+import time
+from functools import wraps
+
+
+def timeit(unit='sec'):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            start = time.time()
+            result = fn(*args, **kwargs)
+            elapsed = (time.time() - start) / (60 if unit == 'min' else 1)
+            rank = kwargs.get('rank', 0)
+            if rank == 0:
+                print(f"{fn.__name__} took {elapsed:.1f} {unit}")
+            return result
+        return wrapper
+    return decorator
+
+
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if hasattr(model, "module") else model
 
 
 def _pixel_auprc(logits: torch.Tensor, targets: torch.Tensor, patch_count: torch.Tensor = None) -> float:
@@ -181,9 +202,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None)
     }
 
 
-#
-
-
+@timeit(unit='min')
 def validate(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -251,6 +270,7 @@ def validate(
     }
 
 
+@timeit(unit='min')
 def test(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -329,6 +349,7 @@ def test(
         wandb_run.summary["test/seg/px_tnr"] = running["px_tnr"] / max(1, n_neg)
 
 
+@timeit(unit='min')
 def train(
     model: torch.nn.Module,
     dataloaders: Dict[str, torch.utils.data.DataLoader],
