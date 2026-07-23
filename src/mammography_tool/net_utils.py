@@ -218,6 +218,7 @@ def validate(
     model.eval()
     running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0, "lesion_detected": 0.0}
     n_pos = 0
+    n_patches = 0
     all_preds: List[Tuple[object, torch.Tensor]] = []
     all_labels: List[torch.Tensor] = []
     base_model = _unwrap_model(model)
@@ -236,7 +237,8 @@ def validate(
                 preds_cpu = preds_patched.cpu()
                 masks_cpu = masks_patched.cpu()
                 seg_loss = criterion(preds_patched[seg_mask], masks_patched[seg_mask])
-                running["seg_loss"] += float(seg_loss.item())
+                n_patches += seg_mask.sum().item()
+                running["seg_loss"] += float(seg_loss.item()) * seg_mask.sum().item()  # weighted by number of patches
                 pred, patch_count = base_model.patcher.reconstruct_image_from_patches(
                     preds_cpu, instances_ids, image_shape=images.shape
                 )
@@ -265,6 +267,7 @@ def validate(
         "auprc": running["auprc"],
         "lesion_detected": running["lesion_detected"],
         "n_pos": n_pos,
+        "n_patches": n_patches,
         "n_batches": len(dataloader),
         "all_preds": all_preds,
         "all_labels": all_labels,
@@ -282,6 +285,7 @@ def validate(
             total_auprc = 0.0
             total_lesion_detected = 0.0
             total_n_pos = 0
+            total_n_patches = 0
             total_n_batches = 0
             for payload in gathered_payloads:
                 total_seg_loss += payload["seg_loss"]
@@ -290,13 +294,15 @@ def validate(
                 total_auprc += payload["auprc"]
                 total_lesion_detected += payload["lesion_detected"]
                 total_n_pos += payload["n_pos"]
+                total_n_patches += payload["n_patches"]
                 total_n_batches += payload["n_batches"]
                 all_preds.extend(payload["all_preds"])
                 all_labels.extend(payload["all_labels"])
 
             cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
             final_stats = {
-                "seg_loss": total_seg_loss / max(1, total_n_pos),
+                # "seg_loss": total_seg_loss / max(1, total_n_pos),
+                "seg_loss": total_seg_loss / max(1, total_n_patches),
                 "cls_loss": total_cls_loss / max(1, total_n_batches),
                 "dice": total_dice / max(1, total_n_pos),
                 "auprc": total_auprc / max(1, total_n_pos),
