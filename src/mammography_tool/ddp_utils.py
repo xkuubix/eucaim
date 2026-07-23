@@ -21,18 +21,13 @@ def init_distributed():
 
     # Check if running under torchrun or SLURM
     # torchrun sets these automatically
-    rank = int(os.environ['RANK'])
-    world_size = int(os.environ['WORLD_SIZE'])
-    local_rank = int(os.environ['LOCAL_RANK'])
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
     print(f"Detected torchrun environment: RANK={rank}, WORLD_SIZE={world_size}, LOCAL_RANK={local_rank}")
     torch.cuda.set_device(local_rank)
 
-    dist.init_process_group(
-        backend='nccl',
-        init_method='env://',
-        rank=rank,
-        world_size=world_size
-    )
+    dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
 
     return True, local_rank, rank, world_size
 

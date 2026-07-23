@@ -200,34 +200,10 @@ def get_fold_dataloaders_ddp(config: dict, fold_idx: int, rank: int, world_size:
 
     # Use DistributedSampler for training if DDP is enabled
     if is_ddp:
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-            seed=seed
-        )
-        val_sampler = DistributedSampler(
-            val_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=False,
-            seed=seed
-        )
-        test_sampler = DistributedSampler(
-            test_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=False,
-            seed=seed
-        )
-        cal_sampler = DistributedSampler(
-            cal_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=False,
-            seed=seed
-        )
+        train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=seed)
+        val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=seed)
+        test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=seed)
+        cal_sampler = DistributedSampler(cal_dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=seed)
 
         train_loader = DataLoader(
             train_dataset,

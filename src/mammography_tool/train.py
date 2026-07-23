@@ -54,7 +54,7 @@ if rank == 0:
     print(f"Device: {device}")
 
     # Log SLURM info if available
-    if 'SLURM_JOB_ID' in os.environ:
+    if "SLURM_JOB_ID" in os.environ:
         print(f"SLURM Job ID: {os.environ['SLURM_JOB_ID']}")
         print(f"SLURM Nodes: {os.environ.get('SLURM_JOB_NODELIST', 'N/A')}")
         print(f"Master Address: {os.environ.get('MASTER_ADDR', 'N/A')}")
@@ -129,12 +129,14 @@ if config.get("resume_from_run"):
 
         resume_payload = {
             "epoch": checkpoint["epoch"],
-            "model_state_dict": checkpoint["model"].state_dict()
-            if hasattr(checkpoint["model"], "state_dict")
-            else checkpoint["model"],
-            "optimizer_state_dict": checkpoint["optimizer"].state_dict()
-            if hasattr(checkpoint["optimizer"], "state_dict")
-            else checkpoint["optimizer"],
+            "model_state_dict": (
+                checkpoint["model"].state_dict() if hasattr(checkpoint["model"], "state_dict") else checkpoint["model"]
+            ),
+            "optimizer_state_dict": (
+                checkpoint["optimizer"].state_dict()
+                if hasattr(checkpoint["optimizer"], "state_dict")
+                else checkpoint["optimizer"]
+            ),
         }
     else:
         resume_payload = None

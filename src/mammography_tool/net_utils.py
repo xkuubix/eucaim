@@ -8,18 +8,20 @@ import time
 from functools import wraps
 
 
-def timeit(unit='sec'):
+def timeit(unit="sec"):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             start = time.time()
             result = fn(*args, **kwargs)
-            elapsed = (time.time() - start) / (60 if unit == 'min' else 1)
-            rank = kwargs.get('rank', 0)
+            elapsed = (time.time() - start) / (60 if unit == "min" else 1)
+            rank = kwargs.get("rank", 0)
             if rank == 0:
                 print(f"{fn.__name__} took {elapsed:.1f} {unit}")
             return result
+
         return wrapper
+
     return decorator
 
 
@@ -149,7 +151,7 @@ def _get_pred_rates_from_logits(logits: torch.Tensor, targets: torch.Tensor, thr
     return fpr, fnr, tpr, tnr
 
 
-@timeit(unit='min')
+@timeit(unit="min")
 def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None, grad_acc_steps=1):
     model.train()
     running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0}
@@ -203,7 +205,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, clip_grad=None,
     }
 
 
-@timeit(unit='min')
+@timeit(unit="min")
 def validate(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -228,7 +230,9 @@ def validate(
             masks = batch["annotation"].to(device)
             labels = batch["patientclass"].squeeze(0).to(device)
 
-            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(images, masks, bg_threshold=0.01, bg_ratio=2.0)
+            preds_patched, masks_patched, instances_ids, cls_logits, attn, seg_mask = model(
+                images, masks, bg_threshold=0.01, bg_ratio=2.0
+            )
             all_preds.append(cls_logits.cpu())
             all_labels.append(labels.cpu())
             cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels)
@@ -332,7 +336,7 @@ def validate(
     }
 
 
-@timeit(unit='min')
+@timeit(unit="min")
 def test(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
@@ -428,7 +432,16 @@ def test(
         if rank == 0:
             all_preds = []
             all_labels = []
-            totals = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0, "px_fpr": 0.0, "px_fnr": 0.0, "px_tpr": 0.0, "px_tnr": 0.0}
+            totals = {
+                "seg_loss": 0.0,
+                "cls_loss": 0.0,
+                "dice": 0.0,
+                "auprc": 0.0,
+                "px_fpr": 0.0,
+                "px_fnr": 0.0,
+                "px_tpr": 0.0,
+                "px_tnr": 0.0,
+            }
             total_n_pos = 0
             total_n_neg = 0
             total_n_batches = 0
@@ -489,7 +502,7 @@ def test(
     return final_stats
 
 
-@timeit(unit='min')
+@timeit(unit="min")
 def train(
     model: torch.nn.Module,
     dataloaders: Dict[str, torch.utils.data.DataLoader],
@@ -628,7 +641,10 @@ def train(
                         if wandb_run is not None:
                             _safe_wandb_log(wandb_run, "early_stopping/stopped_epoch", epoch + 1, step=epoch)
                             _safe_wandb_log(
-                                wandb_run, "early_stopping/patience", early_stopping_patience - epochs_since_improve, step=epoch
+                                wandb_run,
+                                "early_stopping/patience",
+                                early_stopping_patience - epochs_since_improve,
+                                step=epoch,
                             )
                 if is_ddp and dist.is_initialized():
                     stop_tensor = torch.tensor([1 if should_stop else 0], device=device)
