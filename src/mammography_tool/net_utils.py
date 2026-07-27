@@ -670,7 +670,13 @@ def train(
     history_out["best_val_loss"] = best_val if best_epoch >= 0 else None
     history_out["best_model_path"] = best_model_path
 
-    # Final wandb logs
+    if is_ddp and dist.is_initialized():
+        path_list = [best_model_path]
+        dist.broadcast_object_list(path_list, src=0)
+        best_model_path = path_list[0]
+
+    history_out["best_model_path"] = best_model_path
+
     if wandb_run is not None:
         if best_model_path is not None:
             wandb_run.summary["best/model_path"] = best_model_path
