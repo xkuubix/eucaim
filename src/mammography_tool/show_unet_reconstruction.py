@@ -32,7 +32,7 @@ print("Reloaded config from wandb")
 
 config["data"]["overlap"] = 0.875
 
-dataloaders = utils.get_fold_dataloaders(config, 0)
+dataloaders = utils.get_fold_dataloaders_ddp(config, 0, 0, 1, False)
 activation = config.get("activation", "prelu").lower()
 
 unet = PatchUNet(
