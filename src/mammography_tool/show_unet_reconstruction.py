@@ -56,7 +56,7 @@ unet = PatchUNet(
 if model_path:
     ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
     print(f"Loading model from {model_path} [{ckpt['epoch']}]")
-    unet = ckpt["model"]
+    unet.load_state_dict(ckpt["model_state_dict"])
 loss_fn_name = config["training_plan"].get("loss_function", "dice")
 criterion = utils.get_loss_function(loss_fn_name=loss_fn_name, device=device)
 
