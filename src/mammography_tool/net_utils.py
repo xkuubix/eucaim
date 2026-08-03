@@ -386,11 +386,12 @@ def test(
                 pred, patch_count = base_model.patcher.reconstruct_image_from_patches(
                     preds_patched, instances_ids, image_shape=images.shape
                 )  # (c, h, w)
-                mask_reconstructed, _ = (
-                    base_model.patcher.reconstruct_image_from_patches(masks_patched, instances_ids, image_shape=images.shape)
-                    if masks is not None
-                    else None
-                )
+                if masks is not None:
+                    mask_reconstructed, _ = base_model.patcher.reconstruct_image_from_patches(
+                        masks_patched, instances_ids, image_shape=images.shape
+                    )
+                else:
+                    mask_reconstructed = None
                 running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, threshold=0.5, patch_count=patch_count)
                 running["auprc"] += _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
                 fpr, fnr, tpr, tnr = _get_pred_rates_from_logits(pred, mask_reconstructed)
