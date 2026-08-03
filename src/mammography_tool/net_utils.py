@@ -340,7 +340,6 @@ def validate(
 def test(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
-    criterion: Optional[torch.nn.Module],
     device: torch.device,
     wandb_run: Optional[Any] = None,
     rank: int = 0,
@@ -360,7 +359,7 @@ def test(
     If `return_predictions` is True, returns a list of (instances_ids, probs) per batch.
     """
     model.eval()
-    running = {"seg_loss": 0.0, "cls_loss": 0.0, "dice": 0.0, "auprc": 0.0}
+    running = {"dice": 0.0, "auprc": 0.0}
     running["px_fpr"] = 0.0
     running["px_fnr"] = 0.0
     running["px_tpr"] = 0.0
@@ -392,7 +391,6 @@ def test(
                     if masks is not None
                     else None
                 )
-                seg_loss = criterion(pred, mask_reconstructed) if mask_reconstructed is not None else 0.0
                 running["dice"] += _dice_from_logits_map(pred, mask_reconstructed, threshold=0.5, patch_count=patch_count)
                 running["auprc"] += _pixel_auprc(pred, mask_reconstructed, patch_count=patch_count)
                 fpr, fnr, tpr, tnr = _get_pred_rates_from_logits(pred, mask_reconstructed)
@@ -401,18 +399,12 @@ def test(
                 running["px_tpr"] += tpr
                 running["px_tnr"] += tnr
             else:
-                seg_loss = torch.tensor(0.0, device=device, requires_grad=False)
                 n_neg += 1
-            cls_loss = torch.nn.functional.cross_entropy(cls_logits, labels.to(device))
 
-            running["seg_loss"] += float(seg_loss) if isinstance(seg_loss, float) else float(seg_loss.item())
-            running["cls_loss"] += float(cls_loss.item())
             del images, masks, preds_patched, masks_patched
             torch.cuda.empty_cache()
 
     local_payload = {
-        "seg_loss": running["seg_loss"],
-        "cls_loss": running["cls_loss"],
         "dice": running["dice"],
         "auprc": running["auprc"],
         "px_fpr": running["px_fpr"],
@@ -433,8 +425,6 @@ def test(
             all_preds = []
             all_labels = []
             totals = {
-                "seg_loss": 0.0,
-                "cls_loss": 0.0,
                 "dice": 0.0,
                 "auprc": 0.0,
                 "px_fpr": 0.0,
@@ -456,8 +446,6 @@ def test(
 
             cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
             final_stats = {
-                "seg_loss": totals["seg_loss"] / max(1, total_n_pos),
-                "cls_loss": totals["cls_loss"] / max(1, total_n_batches),
                 "dice": totals["dice"] / max(1, total_n_pos),
                 "auprc": totals["auprc"] / max(1, total_n_pos),
                 "px_fpr": totals["px_fpr"] / max(1, total_n_pos),
@@ -475,8 +463,6 @@ def test(
     else:
         cls_metrics = classification_metrics(all_preds, torch.cat(all_labels).numpy())
         final_stats = {
-            "seg_loss": running["seg_loss"] / max(1, n_pos),
-            "cls_loss": running["cls_loss"] / max(1, len(dataloader.dataset)),
             "dice": running["dice"] / max(1, n_pos),
             "auprc": running["auprc"] / max(1, n_pos),
             "px_fpr": running["px_fpr"] / max(1, n_pos),
@@ -487,8 +473,6 @@ def test(
         }
 
     if wandb_run is not None and rank == 0:
-        wandb_run.summary["test/seg/loss"] = final_stats["seg_loss"]
-        wandb_run.summary["test/cls/loss"] = final_stats["cls_loss"]
         wandb_run.summary["test/seg/dice"] = final_stats["dice"]
         wandb_run.summary["test/seg/auprc"] = final_stats["auprc"]
         wandb_run.summary["test/cls/acc"] = final_stats["cls_metrics"]["acc"]

@@ -213,7 +213,7 @@ torch.cuda.synchronize()
 gc.collect()
 
 with torch.no_grad():
-    test(model, dataloaders["test"], criterion, device, wandb_run=run, rank=rank)
+    test(model, dataloaders["test"], device, wandb_run=run, rank=rank)
 
 if run:
     run.finish()
